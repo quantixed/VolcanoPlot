@@ -47,9 +47,9 @@ Function MakeVolcano(prefix1,prefix2,baseVal)
 	String wList2 = WaveList(prefix2,";","")
 	Concatenate/O wList2, allCond2
 	
-	// add noise to base values
-	allCond1[][] = (allCond1[p][q] == baseVal) ? allCond1[p][q] + gnoise(10) : allCond1[p][q]
-	allCond2[][] = (allCond2[p][q] == baseVal) ? allCond2[p][q] + gnoise(10) : allCond2[p][q]
+	// deal with baseVal
+	ImputeBaseVal(allCond1,baseVal)
+	ImputeBaseVal(allCond2,baseVal)
 	
 	// make mean waves
 	MatrixOp/O meanCond1 = sumrows(allCond1)
@@ -89,6 +89,34 @@ Function MakeVolcano(prefix1,prefix2,baseVal)
 	TableInterestingValues()
 End
 
+STATIC Function ImputeBaseVal(m0,baseVal)
+	WAVE m0
+	Variable baseVal
+	
+	// make a copy of the matrix
+	Duplicate/O/FREE m0,m1
+	// delete base value and then find the mean and sd of lowest 15 values
+	if(numtype(baseVal) == 2)
+		// do nothing
+	else
+		m1[][] = (m1[p][q] == baseVal) ? NaN : m1[p][q]
+	endif
+	Redimension/N=(dimsize(m0,0)*dimsize(m0,1)) m1
+	WaveTransform zapnans m1
+	Sort m1, m1
+	
+	Variable meanVar = mean(m1,0,14)
+	Variable sdVar = sqrt( variance(m1,0,14) )
+	
+	// add noise to base values in m0
+	if(numtype(baseVal) == 2)
+		// deal with NaN
+		m0[][] = (numtype(m0[p][q]) == 2) ? meanVar + gnoise(sdVar) : m0[p][q]
+	else
+		m0[][] = (m0[p][q] == baseVal) ? meanVar + gnoise(sdVar) : m0[p][q]
+	endif
+End
+
 Function MakeVPlot()
 	WAVE allTWave,ratioWave_log2,colorWave,colorTableWave
 	KillWindow/Z volcanoPlot
@@ -96,12 +124,14 @@ Function MakeVPlot()
 	SetAxis/W=volcanoPlot/A/R/N=1 left
 	ModifyGraph/W=volcanoPlot log(left)=1
 	Variable maxVar = max(wavemax(ratioWave_log2),abs(wavemin(ratioWave_log2)))
+	Variable minPVar = wavemin(allTWave)
+		minPVar = 10 ^ (floor((log(minPVar))))
 	SetAxis/W=volcanoPlot bottom -maxVar,maxVar
 	ModifyGraph/W=volcanoPlot mode=3,marker=19
 	SetDrawEnv/W=volcanoPlot xcoord= bottom,ycoord= left,dash= 3;DelayUpdate
 	DrawLine/W=volcanoPlot -maxVar,0.05,maxVar,0.05
 	SetDrawEnv/W=volcanoPlot xcoord= bottom,ycoord= left,dash= 3;DelayUpdate
-	DrawLine/W=volcanoPlot 0,1,0,1e-5 // not automatic
+	DrawLine/W=volcanoPlot 0,1,0,minPVar
 	ModifyGraph/W=VolcanoPlot zColor(allTWave)={colorWave,0,3,cindexRGB,0,colorTableWave}
 	SetWindow VolcanoPlot, hook(modified)=thunk_hook
 End
