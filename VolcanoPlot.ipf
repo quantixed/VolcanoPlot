@@ -82,7 +82,7 @@ Function MakeVolcano(prefix1,prefix2,baseVal)
 	Duplicate/O ratioWave,ratioWave_log2
 	ratioWave_log2 = log2(abs(ratioWave[p]))
 	// assign colors
-	colorWave = (abs(ratioWave_log2 >= 2)) ? colorWave[p] + 1 : colorWave[p]
+	colorWave = (abs(ratioWave_log2 >= 1)) ? colorWave[p] + 1 : colorWave[p]
 	colorWave = (abs(allTwave < 0.05)) ? colorWave[p] + 2 : colorWave[p]
 	MakeColorTableWave()
 	MakeVPlot()
@@ -217,3 +217,4 @@ function thunk_hook(s)
 	endswitch
  
 end
+
