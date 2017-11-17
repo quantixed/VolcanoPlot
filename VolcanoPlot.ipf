@@ -14,8 +14,8 @@ Function VolcanoIO_Panel()
 	
 	DoWindow/K VolcanoSetup
 	NewPanel/N=VolcanoSetup/K=1/W=(81,73,774,200)
-	SetVariable box1,pos={86,13},size={500,14},title="Prefix for condition 1",value=_STR:prefix1
-	SetVariable box2,pos={86,44},size={500,14},title="Prefix for condition 2",value=_STR:prefix2
+	SetVariable box1,pos={86,13},size={500,14},title="Prefix for condition 1 (test)",value=_STR:prefix1
+	SetVariable box2,pos={86,44},size={500,14},title="Prefix for condition 2 (ctrl)",value=_STR:prefix2
 	SetVariable box3,pos={86,75},size={166,14},title="Value for absent proteins",format="%g",value=_NUM:baseVal
 	
 	Button DoIt,pos={564,100},size={100,20},proc=ButtonProc,title="Do It"
@@ -87,6 +87,7 @@ Function MakeVolcano(prefix1,prefix2,baseVal)
 	MakeColorTableWave()
 	MakeVPlot()
 	TableInterestingValues()
+	MakeMeanComparison()
 End
 
 STATIC Function ImputeBaseVal(m0,baseVal)
@@ -164,30 +165,35 @@ Function TableInterestingValues()
 	Sort/R {so_colorWave,so_productWave}, so_allTWave, so_ratioWave, so_productWave, so_colorWave, so_NAME, so_SHORTNAME, so_keyW
 	KillWindow/Z rankTable
 	Edit/N=rankTable/W=(432,45,942,734) so_NAME, so_SHORTNAME, so_productWave, so_colorWave, so_allTWave, so_ratioWave, so_keyW
+End
+
+Function MakeMeanComparison()
+	KillWindow/Z meanPlot
+	WAVE/Z meanCond1,meanCond2
+	WAVE/Z colorWave,colorTableWave
+	if(!WaveExists(meanCond1) || !WaveExists(meanCond2))
+		Print "Error: no mean waves."
+		return -1
+	endif
 	
+	Display/N=meanPlot/W=(944,45,1340,401) meanCond1 vs meanCond2
+	Variable maxVar = max(wavemax(meanCond1),wavemax(meanCond2))
+	Variable minVar = min(wavemin(meanCond1),wavemin(meanCond2))
+		maxVar = 10 ^ (ceil((log(maxVar))))
+		minVar = 10 ^ (floor((log(minVar)))) // if any Nans will this fail?
+	SetAxis/W=meanPlot left minVar,maxVar
+	SetAxis/W=meanPlot bottom minVar,maxVar
+	ModifyGraph/W=meanPlot log=1
+	ModifyGraph/W=meanPlot width={Plan,1,bottom,left}
+	ModifyGraph/W=meanPlot mode=3,marker=19
+	ModifyGraph/W=meanPlot zColor(meanCond1)={colorWave,0,3,cindexRGB,0,colorTableWave}
+	ModifyGraph/W=meanPlot msize=3,mrkThick=0
+	Label/W=meanPlot left "Condition 1"
+	Label/W=meanPlot bottom "Condition 2"
+	SetWindow meanPlot, hook(modified)=thunk_hook
 End
 
 // from _sk http://www.igorexchange.com/node/7797
-
-function thunk_make_data()
-	string s_winname = "thunkdata"
- 
-	dowindow $s_winname
-	if (v_flag)
-		dowindow/k $s_winname
-	endif
- 
-	make/o/n=10 w_a = gnoise(10)
-	make/o/n=10 w_b = gnoise(10)
-	make/o/n=10 w_c = gnoise(10)
-	display/n=$s_winname/k=1 w_a vs w_b
-	ModifyGraph/w=$s_winname mode=3,marker=16,msize=5,useMrkStrokeRGB=1;DelayUpdate
-	ModifyGraph/w=$s_winname zColor(w_a)={w_c,*,*,Grays,0};DelayUpdate
-	ModifyGraph/w=$s_winname width={Aspect,1},height={Aspect,1};DelayUpdate
-	ModifyGraph/w=$s_winname mirror=2
- 
-	setwindow $s_winname, hook(modified)=thunk_hook
-end
  
 function thunk_hook(s)
 	struct WMWinHookStruct& s
