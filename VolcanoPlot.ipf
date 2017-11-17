@@ -193,27 +193,24 @@ Function MakeMeanComparison()
 	SetWindow meanPlot, hook(modified)=thunk_hook
 End
 
-// from _sk http://www.igorexchange.com/node/7797
+// Modified from _sk http://www.igorexchange.com/node/7797
  
-function thunk_hook(s)
-	struct WMWinHookStruct& s
+Function thunk_hook(s)
+	Struct WMWinHookStruct& s
 	WAVE allTWave
 	WAVE/T SHORTNAME
  
 	strswitch (s.eventname)
 		case "mouseup":
-			wave w_c = root:w_c
-			wave w_a = root:w_a
-			wave w_b = root:w_b
- 
-			string s_traceinfo = TraceFromPixel(s.mouseloc.h, s.mouseloc.v, "WINDOW:"+s.winname+";")
-			variable v_pt = str2num(stringbykey("HITPOINT", s_traceinfo))
+
+			String s_traceinfo = TraceFromPixel(s.mouseloc.h, s.mouseloc.v, "WINDOW:"+s.winname+";")
+			Variable v_pt = str2num(StringByKey("HITPOINT", s_traceinfo))
+			String targetTrace = StringByKey("TRACE", s_traceinfo) // now takes whatever trace is clicked on
  
 			if (numtype(v_pt) != 2)
-				//print "f(z): ", w_c[v_pt]
-				tag/c/n=t1/b=3/f=0/s=3/v=1/X=10/Y=10 allTwave, v_pt, SHORTNAME[v_pt]
+				Tag/c/n=t1/b=3/f=0/s=3/v=1/X=10/Y=10 $targetTrace, v_pt, SHORTNAME[v_pt]
 			else
-				tag/n=t1/k
+				Tag/n=t1/k
 			endif
 			break
  
