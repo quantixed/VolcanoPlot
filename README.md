@@ -5,11 +5,13 @@ Pairwise comparison of "intensity" data from proteomics data from two conditions
 
 Run from Macros menu and tell Igor which two conditions you want to compare (give Igor a prefix for waves), e.g. `ctrl*` and `test*` will find ctrl_1,ctrl_2 etc.
 
-Also tell Igor what the basevalue is. This is the intensity assigned to any proteins which were not detected. NaN is currently not supported.
+Also tell Igor what the basevalue is. This is the intensity assigned to any proteins which were not detected.
 
 The protein names need to be in TextWaves with names `NAME` and `SHORTNAME`. I will add more flexibility to this soon.
 
-Igor will make a Volcano Plot of this comparison. Proteins are coloured according to magnitude of change from condition 2 (2^2) and according to P-value. Proteins can be clicked on to reveal their `SHORTNAME`.
+Igor will make a Volcano Plot of this comparison. Proteins are coloured according to magnitude of change from control and according to P-value. Proteins can be clicked on to reveal their `SHORTNAME`.
+
+Transforms and imputation are done exactly as described for the default settings in Perseus.
 
 Minimum data to run (all in `root`):
 

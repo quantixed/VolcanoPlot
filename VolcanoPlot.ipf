@@ -48,18 +48,10 @@ Function MakeVolcano(prefix1,prefix2,baseVal)
 	Concatenate/O wList2, allCond2
 	
 	// deal with baseVal
-	ImputeBaseVal(allCond1,baseVal)
-	ImputeBaseVal(allCond2,baseVal)
+	TransformImputeBaseVal(allCond1,baseVal)
+	TransformImputeBaseVal(allCond2,baseVal)
 	
-	// make mean waves
-	MatrixOp/O meanCond1 = sumrows(allCond1)
-	meanCond1 /=ItemsInList(wList1)
-	MatrixOp/O meanCond2 = sumrows(allCond2)
-	meanCond2 /=ItemsInList(wList2)
-	
-	// ratio wave
-	MatrixOp/O ratioWave = meanCond1 / meanCond2
-
+	// now do T-tests
 	Variable nProt = dimsize(allCond1,0)
 	Make/O/N=(nProt) allTWave,colorWave=0
 	Variable pVar
@@ -79,6 +71,18 @@ Function MakeVolcano(prefix1,prefix2,baseVal)
 		endif
 		allTWave[i] = pVar
 	endfor
+	
+	// make mean waves - these need transformation back
+	allCond1[][] = 10^(allCond1[p][q])
+	allCond2[][] = 10^(allCond2[p][q])
+	MatrixOp/O meanCond1 = sumrows(allCond1)
+	meanCond1 /=ItemsInList(wList1)
+	MatrixOp/O meanCond2 = sumrows(allCond2)
+	meanCond2 /=ItemsInList(wList2)
+	
+	// ratio wave
+	MatrixOp/O ratioWave = meanCond1 / meanCond2
+	
 	Duplicate/O ratioWave,ratioWave_log2
 	ratioWave_log2 = log2(abs(ratioWave[p]))
 	// assign colors
@@ -90,32 +94,42 @@ Function MakeVolcano(prefix1,prefix2,baseVal)
 	MakeMeanComparison()
 End
 
-STATIC Function ImputeBaseVal(m0,baseVal)
+STATIC Function TransformImputeBaseVal(m0,baseVal)
 	WAVE m0
 	Variable baseVal
+	// values from Perseus - working on each replicate not on whole matrix 
+	Variable width = 0.3
+	Variable downShift = 1.8
 	
 	// make a copy of the matrix
 	Duplicate/O/FREE m0,m1
-	// delete base value and then find the mean and sd of lowest 15 values
+	// delete base value
 	if(numtype(baseVal) == 2)
 		// do nothing
 	else
 		m1[][] = (m1[p][q] == baseVal) ? NaN : m1[p][q]
 	endif
-	Redimension/N=(dimsize(m0,0)*dimsize(m0,1)) m1
-	WaveTransform zapnans m1
-	Sort m1, m1
+	// log tranform
+	m1[][] = log(m1[p][q])
 	
-	Variable meanVar = mean(m1,0,14)
-	Variable sdVar = sqrt( variance(m1,0,14) )
+	Variable nCols = dimsize(m1,1)
+	Variable meanVar,sdVar
+	Variable i
 	
-	// add noise to base values in m0
-	if(numtype(baseVal) == 2)
-		// deal with NaN
-		m0[][] = (numtype(m0[p][q]) == 2) ? meanVar + gnoise(sdVar) : m0[p][q]
-	else
-		m0[][] = (m0[p][q] == baseVal) ? meanVar + gnoise(sdVar) : m0[p][q]
-	endif
+	for(i = 0; i < nCols; i += 1)
+		MatrixOp/O/FREE tempW = col(m1,i)
+		WaveTransform zapnans tempW
+		sdVar = sqrt(variance(tempW))
+		meanVar = mean(tempW) - (sdVar * 1.8)
+		sdVar = sdVar * width
+		// add noise to base values in m0 and log transform real values col by col
+		if(numtype(baseVal) == 2)
+			// deal with NaN
+			m0[][i] = (numtype(m0[p][i]) == 2) ? meanVar + gnoise(sdVar) : log(m0[p][i])
+		else
+			m0[][i] = (m0[p][i] == baseVal) ? meanVar + gnoise(sdVar) : log(m0[p][i])
+		endif
+	endfor
 End
 
 Function MakeVPlot()
