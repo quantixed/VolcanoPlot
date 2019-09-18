@@ -16,37 +16,45 @@ Function VolcanoIO_Panel()
 	String prefix1 = "prefix1*"
 	String prefix2 = "prefix2*"
 	Variable baseVal = 0
+	Variable pairOpt = 0
 	
 	DoWindow/K VolcanoSetup
 	NewPanel/N=VolcanoSetup/K=1/W=(81,73,774,200)
 	SetVariable box1,pos={86,13},size={500,14},title="Prefix for condition 1 (test)",value=_STR:prefix1
 	SetVariable box2,pos={86,44},size={500,14},title="Prefix for condition 2 (ctrl)",value=_STR:prefix2
 	SetVariable box3,pos={29,75},size={300,14},title="What value represents absent proteins?",format="%g",value=_NUM:baseVal
-	
+	CheckBox box4,pos={208,106},size={20,20},title="Analyse paired data?",value=pairOpt,mode=0
 	Button DoIt,pos={564,100},size={100,20},proc=ButtonProc,title="Do It"
 End
  
 Function ButtonProc(ba) 
-    STRUCT WMButtonAction &ba
-    if( ba.eventCode != 2 )
-    	return 0
-    endif
-    ControlInfo/W=$ba.win box1
-    String prefix1 = S_Value
-    ControlInfo/W=$ba.win box2
-    String prefix2 = S_Value
-    ControlInfo/W=$ba.win box3
-    Print "Test group is", prefix1, "Control group is", prefix2, "Value for imputation is", V_Value
-    MakeVolcano(prefix1,prefix2,V_Value)
+	STRUCT WMButtonAction &ba
+	if( ba.eventCode != 2 )
+		return 0
+	endif
+	ControlInfo/W=$ba.win box1
+	String prefix1 = S_Value
+	ControlInfo/W=$ba.win box2
+	String prefix2 = S_Value
+	ControlInfo/W=$ba.win box3
+	Variable baseVal = V_Value
+	ControlInfo/W=$ba.win box4
+	Variable pairOpt = V_Value
+	Print "Test group:", prefix1, "Control group:", prefix2, "Value for imputation:", baseVal
+	if(pairOpt == 1)
+		Print "Using paired data."
+	endif
+	MakeVolcano(prefix1,prefix2,baseVal,pairOpt)
 End
 
 // This function drives the whole program
 /// @param	prefix1	string prefix that will select all waves of condition1
 /// @param	prefix2	string prefix that will select all waves of condition1
 /// @param	baseVal	proteins that are absent have this value
-Function MakeVolcano(prefix1,prefix2,baseVal)
+/// @param  pairOpt	1 is paired, 0 is not
+Function MakeVolcano(prefix1,prefix2,baseVal,pairOpt)
 	String prefix1,prefix2
-	Variable baseVal
+	Variable baseVal,pairOpt
 	
 	String wList1 = WaveList(prefix1,";","")
 	String wList2 = WaveList(prefix2,";","")
@@ -54,6 +62,10 @@ Function MakeVolcano(prefix1,prefix2,baseVal)
 		DoAlert 0, "Missing data"
 		return -1
 	endif
+	// make sure the lists are in order
+	wList1 = SortList(wList1)
+	wList2 = SortList(wList2)
+	// Possibly we should use a more sophisticated way to check the groups match?
 	Concatenate/O wList1, allCond1
 	Concatenate/O wList2, allCond2
 	
@@ -65,17 +77,24 @@ Function MakeVolcano(prefix1,prefix2,baseVal)
 	Variable nProt = dimsize(allCond1,0)
 	Make/O/N=(nProt) allTWave,colorWave=0
 	Variable pVar
-	WAVE/Z W_StatsTTest
 	
 	Variable i
 	
 	for(i = 0; i < nProt; i += 1)
 		MatrixOp/O/FREE w0 = row(allCond1,i) ^ t
 		MatrixOp/O/FREE w1 = row(allCond2,i) ^ t
-		StatsTTest/Q/Z w0,w1
+		if(pairOpt == 0)
+			StatsTTest/Q/Z w0,w1
+		else
+			StatsTTest/Q/Z/PAIR w0,w1
+		endif
 		WAVE/Z W_StatsTTest
 		if(V_flag == 0)
-			pVar = W_StatsTTest[9] // p-value
+			if(pairOpt == 0)
+				pVar = W_StatsTTest[9] // p-value
+			else
+				pVar = W_StatsTTest[6] // p-value for Paired
+			endif
 		else
 			pVar = 1
 		endif
@@ -221,19 +240,31 @@ End
 Function DoThePCA()
 	KillWindow/Z pcaPlot
 	WAVE/Z colorWave, colorTableWave, allCond1, allCond2
-	Concatenate/O {allCond1,allCond2}, forPCA
+	// we will use imputed values
+	Concatenate/O/NP=1 {allCond1,allCond2}, forPCA
+	// pre-process matrix, centre on 0, sd of 1
+	// we're interested in Rows (proteins) not Cols (expts)
+	MatrixOp/O forPCA = SubtractMean(forPCA,2)
+	MatrixOp/O forPCA = NormalizeRows(forPCA)
+	// abfter subtraction we can get 0 across the row, gives NaN after norm so
+	forPCA[][] = (numtype(forPCA[p][q]) == 2) ? 0 : forPCA[p][q]
+	// do the PCA, SRMT flag is needed to get M_R
 	PCA/ALL/SRMT forPCA
 	WAVE/Z M_R
+	// display PC1 and PC2
 	Display/N=pcaPlot/W=(36,757,431,965) M_R[][1] vs M_R[][0]
-	WaveStats/RMD=[][0,1]/Q M_R
-	SetAxis/W=pcaPlot left V_min,V_Max
-	SetAxis/W=pcaPlot bottom V_min,V_Max
-	ModifyGraph/W=pcaPlot mode=3,marker=19,mrkThick=0,zColor(M_R)={colorWave,*,*,ctableRGB,0,colorTableWave}
+//	WaveStats/RMD=[][0,1]/Q M_R
+//	SetAxis/W=pcaPlot left V_min,V_Max
+//	SetAxis/W=pcaPlot bottom V_min,V_Max
+	SetAxis/W=pcaPlot left -1,1
+	SetAxis/W=pcaPlot bottom -1,1
+	ModifyGraph/W=pcaPlot mode=3,marker=19,msize=2,mrkThick=0
+	ModifyGraph/W=pcaPlot zColor(M_R)={colorWave,*,*,ctableRGB,0,colorTableWave}
 	ModifyGraph/W=pcaPlot zero=4,mirror=1
 	Label/W=pcaPlot left "PC2"
 	Label/W=pcaPlot bottom "PC1"
-	ModifyGraph/W=pcaPlot width={Plan,1,bottom,left}
-	SetWindow meanPlot, hook(modified)=thunk_hook
+	ModifyGraph/W=pcaPlot height={Plan,1,left,bottom}
+	SetWindow pcaPlot, hook(modified)=thunk_hook
 End
 
 // Modified from _sk http://www.igorexchange.com/node/7797
