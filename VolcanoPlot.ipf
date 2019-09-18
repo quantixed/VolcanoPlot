@@ -2,6 +2,11 @@
 #pragma rtGlobals=3		// Use modern global access method and strict wave access.
 #include <Math Utility Functions>
 
+// Figure in the paper was generated with
+// https://github.com/quantixed/TPD54/commit/accb6a86619aa4668e5dadac655e55630e9a55f2
+// Load data into Igor and then run the command from the Macro menu.
+// Note that naming of the columns is important - check example file for details.
+
 Menu "Macros"
 	"Volcano Plot...",  VolcanoIO_Panel()
 End
@@ -10,13 +15,13 @@ Function VolcanoIO_Panel()
 	
 	String prefix1 = "prefix1*"
 	String prefix2 = "prefix2*"
-	Variable baseVal = 1
+	Variable baseVal = 0
 	
 	DoWindow/K VolcanoSetup
 	NewPanel/N=VolcanoSetup/K=1/W=(81,73,774,200)
 	SetVariable box1,pos={86,13},size={500,14},title="Prefix for condition 1 (test)",value=_STR:prefix1
 	SetVariable box2,pos={86,44},size={500,14},title="Prefix for condition 2 (ctrl)",value=_STR:prefix2
-	SetVariable box3,pos={86,75},size={166,14},title="Value for absent proteins",format="%g",value=_NUM:baseVal
+	SetVariable box3,pos={29,75},size={300,14},title="What value represents absent proteins?",format="%g",value=_NUM:baseVal
 	
 	Button DoIt,pos={564,100},size={100,20},proc=ButtonProc,title="Do It"
 End
@@ -31,6 +36,7 @@ Function ButtonProc(ba)
     ControlInfo/W=$ba.win box2
     String prefix2 = S_Value
     ControlInfo/W=$ba.win box3
+    Print "Test group is", prefix1, "Control group is", prefix2, "Value for imputation is", V_Value
     MakeVolcano(prefix1,prefix2,V_Value)
 End
 
@@ -43,8 +49,12 @@ Function MakeVolcano(prefix1,prefix2,baseVal)
 	Variable baseVal
 	
 	String wList1 = WaveList(prefix1,";","")
-	Concatenate/O wList1, allCond1
 	String wList2 = WaveList(prefix2,";","")
+	if(ItemsInList(wList1) == 0 || ItemsInList(wList2) == 0)
+		DoAlert 0, "Missing data"
+		return -1
+	endif
+	Concatenate/O wList1, allCond1
 	Concatenate/O wList2, allCond2
 	
 	// deal with baseVal
@@ -92,6 +102,7 @@ Function MakeVolcano(prefix1,prefix2,baseVal)
 	MakeVPlot()
 	TableInterestingValues()
 	MakeMeanComparison()
+	DoThePCA()
 End
 
 STATIC Function TransformImputeBaseVal(m0,baseVal)
@@ -142,7 +153,7 @@ Function MakeVPlot()
 	Variable minPVar = wavemin(allTWave)
 		minPVar = 10 ^ (floor((log(minPVar))))
 	SetAxis/W=volcanoPlot bottom -maxVar,maxVar
-	ModifyGraph/W=volcanoPlot mode=3,marker=19
+	ModifyGraph/W=volcanoPlot mode=3,marker=19,mrkThick=0
 	SetDrawEnv/W=volcanoPlot xcoord= bottom,ycoord= left,dash= 3;DelayUpdate
 	DrawLine/W=volcanoPlot -maxVar,0.05,maxVar,0.05
 	SetDrawEnv/W=volcanoPlot xcoord= bottom,ycoord= left,dash= 3;DelayUpdate
@@ -207,8 +218,25 @@ Function MakeMeanComparison()
 	SetWindow meanPlot, hook(modified)=thunk_hook
 End
 
+Function DoThePCA()
+	KillWindow/Z pcaPlot
+	WAVE/Z colorWave, colorTableWave, allCond1, allCond2
+	Concatenate/O {allCond1,allCond2}, forPCA
+	PCA/ALL/SRMT forPCA
+	WAVE/Z M_R
+	Display/N=pcaPlot/W=(36,757,431,965) M_R[][1] vs M_R[][0]
+	WaveStats/RMD=[][0,1]/Q M_R
+	SetAxis/W=pcaPlot left V_min,V_Max
+	SetAxis/W=pcaPlot bottom V_min,V_Max
+	ModifyGraph/W=pcaPlot mode=3,marker=19,mrkThick=0,zColor(M_R)={colorWave,*,*,ctableRGB,0,colorTableWave}
+	ModifyGraph/W=pcaPlot zero=4,mirror=1
+	Label/W=pcaPlot left "PC2"
+	Label/W=pcaPlot bottom "PC1"
+	ModifyGraph/W=pcaPlot width={Plan,1,bottom,left}
+	SetWindow meanPlot, hook(modified)=thunk_hook
+End
+
 // Modified from _sk http://www.igorexchange.com/node/7797
- 
 Function thunk_hook(s)
 	Struct WMWinHookStruct& s
 	WAVE allTWave
@@ -234,4 +262,3 @@ Function thunk_hook(s)
 	endswitch
  
 end
-
