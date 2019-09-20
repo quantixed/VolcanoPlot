@@ -1,51 +1,40 @@
 #pragma TextEncoding = "MacRoman"
 #pragma rtGlobals=3		// Use modern global access method and strict wave access.
 #include <Math Utility Functions>
+#include <WaveSelectorWidget>
+#include <PopupWaveSelector>
 
-// Figure in the paper was generated with
+// Figure in the TPD54 paper was generated with
 // https://github.com/quantixed/TPD54/commit/accb6a86619aa4668e5dadac655e55630e9a55f2
 // Load data into Igor and then run the command from the Macro menu.
-// Note that naming of the columns is important - check example file for details.
+// Note that naming of the columns is important
 
+////////////////////////////////////////////////////////////////////////
+// Menu items
+////////////////////////////////////////////////////////////////////////
 Menu "Macros"
-	"Volcano Plot...",  VolcanoIO_Panel()
+	SubMenu "Proteomics"
+		"Volcano Plot...", /Q, VolcanoIO_Panel()
+		"PCA Only...", /Q, MakePCAWaveSelectorPanel()
+	end
 End
 
-Function VolcanoIO_Panel()
-	
-	String prefix1 = "prefix1*"
-	String prefix2 = "prefix2*"
-	Variable baseVal = 0
-	Variable pairOpt = 0
-	
-	DoWindow/K VolcanoSetup
-	NewPanel/N=VolcanoSetup/K=1/W=(81,73,774,200)
-	SetVariable box1,pos={86,13},size={500,14},title="Prefix for condition 1 (test)",value=_STR:prefix1
-	SetVariable box2,pos={86,44},size={500,14},title="Prefix for condition 2 (ctrl)",value=_STR:prefix2
-	SetVariable box3,pos={29,75},size={300,14},title="What value represents absent proteins?",format="%g",value=_NUM:baseVal
-	CheckBox box4,pos={208,106},size={20,20},title="Analyse paired data?",value=pairOpt,mode=0
-	Button DoIt,pos={564,100},size={100,20},proc=ButtonProc,title="Do It"
-End
- 
-Function ButtonProc(ba) 
-	STRUCT WMButtonAction &ba
-	if( ba.eventCode != 2 )
-		return 0
-	endif
-	ControlInfo/W=$ba.win box1
-	String prefix1 = S_Value
-	ControlInfo/W=$ba.win box2
-	String prefix2 = S_Value
-	ControlInfo/W=$ba.win box3
-	Variable baseVal = V_Value
-	ControlInfo/W=$ba.win box4
-	Variable pairOpt = V_Value
-	Print "Test group:", prefix1, "Control group:", prefix2, "Value for imputation:", baseVal
-	if(pairOpt == 1)
-		Print "Using paired data."
-	endif
+////////////////////////////////////////////////////////////////////////
+// Master functions and wrappers
+////////////////////////////////////////////////////////////////////////
+
+Function VolcanoWorkflowWrapper(STRING prefix1,STRING prefix2,VARIABLE baseVal,VARIABLE pairOpt)
 	MakeVolcano(prefix1,prefix2,baseVal,pairOpt)
+	MakeColorTableWave()
+	MakeVPlot()
+	TableInterestingValues()
+	MakeMeanComparison()
+	FromVolcanoToPCA()
 End
+
+////////////////////////////////////////////////////////////////////////
+// Main functions
+////////////////////////////////////////////////////////////////////////
 
 // This function drives the whole program
 /// @param	prefix1	string prefix that will select all waves of condition1
@@ -117,11 +106,6 @@ Function MakeVolcano(prefix1,prefix2,baseVal,pairOpt)
 	// assign colors
 	colorWave = (abs(ratioWave_log2 >= 1)) ? colorWave[p] + 1 : colorWave[p]
 	colorWave = (abs(allTwave < 0.05)) ? colorWave[p] + 2 : colorWave[p]
-	MakeColorTableWave()
-	MakeVPlot()
-	TableInterestingValues()
-	MakeMeanComparison()
-	DoThePCA()
 End
 
 STATIC Function TransformImputeBaseVal(m0,baseVal)
@@ -178,15 +162,9 @@ Function MakeVPlot()
 	SetDrawEnv/W=volcanoPlot xcoord= bottom,ycoord= left,dash= 3;DelayUpdate
 	DrawLine/W=volcanoPlot 0,1,0,minPVar
 	ModifyGraph/W=VolcanoPlot zColor(allTWave)={colorWave,0,3,cindexRGB,0,colorTableWave}
+	Label/W=VolcanoPlot left "P-Value"
+	Label/W=VolcanoPlot bottom "Test / Control (Log\\B2\\M)"
 	SetWindow VolcanoPlot, hook(modified)=thunk_hook
-End
-
-STATIC Function MakeColorTableWave()
-	Make/O/N=(4,4) colorTableWave = 32768
-	colorTableWave[1][0] = 65535
-	colorTableWave[3][0] = 65535
-	colorTableWave[2][2] = 65535
-	colorTableWave[3][2] = 65535
 End
 
 Function TableInterestingValues()
@@ -237,11 +215,39 @@ Function MakeMeanComparison()
 	SetWindow meanPlot, hook(modified)=thunk_hook
 End
 
-Function DoThePCA()
-	KillWindow/Z pcaPlot
-	WAVE/Z colorWave, colorTableWave, allCond1, allCond2
+STATIC Function FromVolcanoToPCA()
+	WAVE/Z allCond1, allCond2
 	// we will use imputed values
 	Concatenate/O/NP=1 {allCond1,allCond2}, forPCA
+	DoThePCA()
+End
+
+STATIC Function GetReadyForPCA(STRING selectedWavesList,VARIABLE baseVal)
+	Concatenate/O selectedWavesList, forPCA
+	// deal with baseVal
+	TransformImputeBaseVal(forPCA,baseVal)
+	DoThePCA()
+End
+
+Function DoThePCA()
+	KillWindow/Z pcaPlot
+	WAVE/Z forPCA
+	if(!WaveExists(forPCA))
+		DoAlert 0, "Missing a 2D wave, forPCA"
+		return 0
+	endif
+	Variable nProt = dimsize(forPCA,0)
+	
+	WAVE/Z colorWave, colorTableWave
+	if(!WaveExists(colorWave) || nProt != DimSize(forPCA,0))
+		Make/O/N=(nProt) colorWave=0
+		MakeColorTableWave()
+		WAVE colorTableWave
+	endif
+	if(!WaveExists(colorTableWave))
+		MakeColorTableWave()
+		WAVE colorTableWave
+	endif
 	// pre-process matrix, centre on 0, sd of 1
 	// we're interested in Rows (proteins) not Cols (expts)
 	MatrixOp/O forPCA = SubtractMean(forPCA,2)
@@ -253,19 +259,96 @@ Function DoThePCA()
 	WAVE/Z M_R
 	// display PC1 and PC2
 	Display/N=pcaPlot/W=(36,757,431,965) M_R[][1] vs M_R[][0]
-//	WaveStats/RMD=[][0,1]/Q M_R
-//	SetAxis/W=pcaPlot left V_min,V_Max
-//	SetAxis/W=pcaPlot bottom V_min,V_Max
 	SetAxis/W=pcaPlot left -1,1
 	SetAxis/W=pcaPlot bottom -1,1
 	ModifyGraph/W=pcaPlot mode=3,marker=19,msize=2,mrkThick=0
-	ModifyGraph/W=pcaPlot zColor(M_R)={colorWave,*,*,ctableRGB,0,colorTableWave}
+	ModifyGraph/W=pcaPlot zColor(M_R)={colorWave,0,3,ctableRGB,0,colorTableWave}
 	ModifyGraph/W=pcaPlot zero=4,mirror=1
 	Label/W=pcaPlot left "PC2"
 	Label/W=pcaPlot bottom "PC1"
 	ModifyGraph/W=pcaPlot height={Plan,1,left,bottom}
 	SetWindow pcaPlot, hook(modified)=thunk_hook
 End
+
+
+////////////////////////////////////////////////////////////////////////
+// Panel functions
+////////////////////////////////////////////////////////////////////////
+
+Function VolcanoIO_Panel()
+	
+	String prefix1 = "prefix1*"
+	String prefix2 = "prefix2*"
+	Variable baseVal = 0
+	Variable pairOpt = 0
+	
+	DoWindow/K VolcanoSetup
+	NewPanel/N=VolcanoSetup/K=1/W=(81,73,774,200)
+	SetVariable box1,pos={86,13},size={500,14},title="Prefix for condition 1 (test)",value=_STR:prefix1
+	SetVariable box2,pos={86,44},size={500,14},title="Prefix for condition 2 (ctrl)",value=_STR:prefix2
+	SetVariable box3,pos={29,75},size={300,14},title="What value represents absent proteins?",format="%g",value=_NUM:baseVal
+	CheckBox box4,pos={208,106},size={20,20},title="Analyse paired data?",value=pairOpt,mode=0
+	Button DoIt,pos={564,100},size={100,20},proc=ButtonProc,title="Do It"
+End
+ 
+Function ButtonProc(ba) 
+	STRUCT WMButtonAction &ba
+	if( ba.eventCode != 2 )
+		return 0
+	endif
+	ControlInfo/W=$ba.win box1
+	String prefix1 = S_Value
+	ControlInfo/W=$ba.win box2
+	String prefix2 = S_Value
+	ControlInfo/W=$ba.win box3
+	Variable baseVal = V_Value
+	ControlInfo/W=$ba.win box4
+	Variable pairOpt = V_Value
+	Print "Test group:", prefix1, "Control group:", prefix2, "Value for imputation:", baseVal
+	if(pairOpt == 1)
+		Print "Using paired data."
+	endif
+	VolcanoWorkflowWrapper(prefix1,prefix2,baseVal,pairOpt)
+End
+
+Function MakePCAWaveSelectorPanel()
+	
+	String panelName = "PCASelector"
+	Variable baseVal = 0
+	
+	if (WinType(panelName) == 7)
+		// if the panel already exists, show it
+		DoWindow/F $panelName
+	else
+		// doesn't exist, make it
+		NewPanel/K=1/N=$panelName/W=(181,179,471,540) as "Select Waves for PCA"
+		// list box control doesn't have any attributes set on it
+		ListBox ExampleWaveSelectorList,pos={9,13},size={273,241}
+		// This function does all the work of making the listbox control into a
+		// Wave Selector widget. Note the optional parameter that says what type of objects to
+		// display in the list. 
+		MakeListIntoWaveSelector(panelName, "ExampleWaveSelectorList", content = WMWS_Waves)
+
+		// This function does all the work of making a PopupMenu control into a wave sorting control
+		PopupMenu sortKind, pos={9,270},title="Sort Waves By"
+		MakePopupIntoWaveSelectorSort(panelName, "ExampleWaveSelectorList", "sortKind")
+		SetVariable box3,pos={9,300},size={230,14},title="What value represents absent proteins?",format="%g",value=_NUM:baseVal
+		Button doPCA,pos={9,330},size={110,20},proc=doPCAButtonProc,title="Do PCA"
+	endif
+End
+
+Function doPCAButtonProc(ctrlName) : ButtonControl
+	String ctrlName
+	
+	ControlInfo/W=PCASelector box3
+	Variable baseVal = V_Value
+	String selectedWavesList = WS_SelectedObjectsList("PCASelector","ExampleWaveSelectorList")
+	GetReadyForPCA(selectedWavesList,baseVal)
+End
+
+////////////////////////////////////////////////////////////////////////
+// Utility functions
+////////////////////////////////////////////////////////////////////////
 
 // Modified from _sk http://www.igorexchange.com/node/7797
 Function thunk_hook(s)
@@ -293,3 +376,11 @@ Function thunk_hook(s)
 	endswitch
  
 end
+
+STATIC Function MakeColorTableWave()
+	Make/O/N=(4,4) colorTableWave = 32768
+	colorTableWave[1][0] = 65535
+	colorTableWave[3][0] = 65535
+	colorTableWave[2][2] = 65535
+	colorTableWave[3][2] = 65535
+End
