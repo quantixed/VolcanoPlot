@@ -1,6 +1,5 @@
 #pragma TextEncoding = "MacRoman"
 #pragma rtGlobals=3		// Use modern global access method and strict wave access.
-#include <Math Utility Functions>
 #include <WaveSelectorWidget>
 #include <PopupWaveSelector>
 
@@ -16,6 +15,7 @@ Menu "Macros"
 	SubMenu "Proteomics"
 		"Volcano Plot...", /Q, VolcanoIO_Panel()
 		"PCA Only...", /Q, MakePCAWaveSelectorPanel()
+		"Label Top 10", /Q, LabelTopTenWorkflow()
 	end
 End
 
@@ -30,6 +30,10 @@ Function VolcanoWorkflowWrapper(STRING prefix1,STRING prefix2,VARIABLE baseVal,V
 	TableInterestingValues()
 	MakeMeanComparison()
 	FromVolcanoToPCA()
+End
+
+Function LabelTopTenWorkflow()
+	LabelTopXProts(10)
 End
 
 ////////////////////////////////////////////////////////////////////////
@@ -102,7 +106,7 @@ Function MakeVolcano(prefix1,prefix2,baseVal,pairOpt)
 	MatrixOp/O ratioWave = meanCond1 / meanCond2
 	
 	Duplicate/O ratioWave,ratioWave_log2
-	ratioWave_log2 = log2(abs(ratioWave[p]))
+	ratioWave_log2 = ln(abs(ratioWave[p]))
 	// assign colors
 	colorWave = (abs(ratioWave_log2 >= 1)) ? colorWave[p] + 1 : colorWave[p]
 	colorWave = (abs(allTwave < 0.05)) ? colorWave[p] + 2 : colorWave[p]
@@ -168,15 +172,16 @@ Function MakeVPlot()
 End
 
 Function TableInterestingValues()
-	WAVE colorWave,allTWave,ratioWave
-	WAVE/T SHORTNAME,NAME // names of proteins hardcoded here - maybe add this to the panel?
+	WAVE colorWave, allTWave, ratioWave, ratioWave_log2
+	WAVE/T SHORTNAME, NAME // names of proteins hardcoded here - maybe add this to the panel?
 	Duplicate/O allTWave, allTWave_log10
 	allTWave_log10 = -log(allTWave[p])
-	MatrixOp/O productWave = allTWave_log10 * ratioWave
+//	MatrixOp/O productWave = allTWave_log10 * ratioWave
+	MatrixOp/O productWave = allTWave_log10 * ratioWave_log2
 	Duplicate/O allTWave, so_allTWave
 	Duplicate/O ratioWave, so_ratioWave
 	Duplicate/O productWave, so_productWave
-	so_productWave = abs(productWave[p])
+//	so_productWave = abs(productWave[p])
 	Duplicate/O colorWave, so_colorWave
 	Duplicate/O NAME, so_NAME
 	Duplicate/O SHORTNAME, so_SHORTNAME
@@ -270,15 +275,36 @@ Function DoThePCA()
 	SetWindow pcaPlot, hook(modified)=thunk_hook
 End
 
+Function LabelTopXProts(numProteins)
+	Variable numProteins
+	if(strlen(WinList("volcanoPlot",";","WIN:1")) < 1)
+		DoAlert 0, "Make Volcano Plot first"
+		return -1
+	endif
+	WAVE/Z so_keyW
+	Make/O/N=(numProteins) topTenPos = so_KeyW[p]
+	WAVE/Z/T so_SHORTNAME
+	Make/O/N=(numProteins)/T topTenLabel = so_SHORTNAME[p]
+	
+	Variable i
+	
+	for(i = 0; i < numProteins; i += 1)
+		Tag/A=LB/C/N=$("top"+num2str(i))/B=1/F=0/S=3/V=1/L=0/X=1/Y=1/W=volcanoPlot allTWave, topTenPos[i], topTenLabel[i]
+	endfor
+End
+
 
 ////////////////////////////////////////////////////////////////////////
 // Panel functions
 ////////////////////////////////////////////////////////////////////////
 
 Function VolcanoIO_Panel()
-	
-	String prefix1 = "prefix1*"
-	String prefix2 = "prefix2*"
+	WAVE/Z/T volcanoPrefixWave
+	if(!WaveExists(volcanoPrefixWave))
+		MAKE/O/N=(2)/T volcanoPrefixWave = {"prefix1*","prefix2*"}
+	endif
+	String prefix1 = volcanoPrefixWave[0]
+	String prefix2 = volcanoPrefixWave[1]
 	Variable baseVal = 0
 	Variable pairOpt = 0
 	
@@ -308,6 +334,9 @@ Function ButtonProc(ba)
 	if(pairOpt == 1)
 		Print "Using paired data."
 	endif
+	WAVE/Z/T 	volcanoPrefixWave
+	volcanoPrefixWave[0] = prefix1
+	volcanoPrefixWave[1] = prefix2
 	VolcanoWorkflowWrapper(prefix1,prefix2,baseVal,pairOpt)
 End
 
