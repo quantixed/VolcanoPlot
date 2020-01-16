@@ -176,8 +176,9 @@ Function TableInterestingValues()
 	WAVE/T SHORTNAME, NAME // names of proteins hardcoded here - maybe add this to the panel?
 	Duplicate/O allTWave, allTWave_log10
 	allTWave_log10 = -log(allTWave[p])
-//	MatrixOp/O productWave = allTWave_log10 * ratioWave
-	MatrixOp/O productWave = allTWave_log10 * ratioWave_log2
+//	MatrixOp/O productWave = allTWave_log10 * ratioWave_log2
+	// manhattan distance 
+	MatrixOp/O productWave = abs(allTWave_log10) + abs(ratioWave_log2)
 	Duplicate/O allTWave, so_allTWave
 	Duplicate/O ratioWave, so_ratioWave
 	Duplicate/O productWave, so_productWave
