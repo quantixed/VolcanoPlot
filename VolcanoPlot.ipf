@@ -106,7 +106,7 @@ Function MakeVolcano(prefix1,prefix2,baseVal,pairOpt)
 	MatrixOp/O ratioWave = meanCond1 / meanCond2
 	
 	Duplicate/O ratioWave,ratioWave_log2
-	ratioWave_log2 = ln(abs(ratioWave[p]))
+	ratioWave_log2 = log(abs(ratioWave[p])) / log(2)
 	// assign colors
 	colorWave = (abs(ratioWave_log2 >= 1)) ? colorWave[p] + 1 : colorWave[p]
 	colorWave = (abs(allTwave < 0.05)) ? colorWave[p] + 2 : colorWave[p]
