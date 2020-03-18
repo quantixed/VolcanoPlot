@@ -13,6 +13,7 @@
 ////////////////////////////////////////////////////////////////////////
 Menu "Macros"
 	SubMenu "Proteomics"
+		"Load MaxQuant Data...", /Q, LoadMaxQuantData()
 		"Volcano Plot...", /Q, VolcanoIO_Panel()
 		"PCA Only...", /Q, MakePCAWaveSelectorPanel()
 		"Label Top 10", /Q, LabelTopTenWorkflow()
@@ -22,6 +23,12 @@ End
 ////////////////////////////////////////////////////////////////////////
 // Master functions and wrappers
 ////////////////////////////////////////////////////////////////////////
+
+Function LoadMaxQuantData()
+	if(LoadMaxQuantFile() == 0)
+		VolcanoIO_Panel()
+	endif
+End
 
 Function VolcanoWorkflowWrapper(STRING prefix1,STRING prefix2,VARIABLE baseVal,VARIABLE pairOpt)
 	MakeVolcano(prefix1,prefix2,baseVal,pairOpt)
@@ -39,6 +46,30 @@ End
 ////////////////////////////////////////////////////////////////////////
 // Main functions
 ////////////////////////////////////////////////////////////////////////
+
+Function LoadMaxQuantFile()
+	NewDataFolder/O/S root:data 
+	LoadWave/A/D/J/K=0/L={0,0,0,0,0}/W/O/Q ""
+	if (strlen(S_Path) == 0) // user pressed cancel
+		return -1
+	endif
+	WAVE/Z/T Gene_names, Protein_names
+	Duplicate/O Gene_names, root:SHORTNAME
+	Duplicate/O Protein_names, root:NAME
+	String wList = WaveList("LFQ_Intensity*",";","")
+	Variable nWaves = ItemsInList(wList)
+	String wName
+	
+	Variable i
+	
+	for(i = 0; i < nWaves; i += 1)
+		wName = StringFromList(i,wList)
+		Duplicate/O $wName, $("root:" + ReplaceString("LFQ_Intensity_",wName,""))
+	endfor
+	
+	SetDataFolder root:
+	return 0
+End
 
 // This function drives the whole program
 /// @param	prefix1	string prefix that will select all waves of condition1
@@ -173,16 +204,14 @@ End
 
 Function TableInterestingValues()
 	WAVE colorWave, allTWave, ratioWave, ratioWave_log2
-	WAVE/T SHORTNAME, NAME // names of proteins hardcoded here - maybe add this to the panel?
+	WAVE/T SHORTNAME, NAME // names of proteins hardcoded here
 	Duplicate/O allTWave, allTWave_log10
 	allTWave_log10 = -log(allTWave[p])
-//	MatrixOp/O productWave = allTWave_log10 * ratioWave_log2
 	// manhattan distance 
 	MatrixOp/O productWave = abs(allTWave_log10) + abs(ratioWave_log2)
 	Duplicate/O allTWave, so_allTWave
 	Duplicate/O ratioWave, so_ratioWave
 	Duplicate/O productWave, so_productWave
-//	so_productWave = abs(productWave[p])
 	Duplicate/O colorWave, so_colorWave
 	Duplicate/O NAME, so_NAME
 	Duplicate/O SHORTNAME, so_SHORTNAME
