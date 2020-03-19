@@ -35,8 +35,10 @@ Function VolcanoWorkflowWrapper(STRING prefix1,STRING prefix2,VARIABLE baseVal,V
 	MakeColorTableWave()
 	MakeVPlot()
 	TableInterestingValues()
+	AddSignificantHitsToVolcano()
 	MakeMeanComparison()
 	FromVolcanoToPCA()
+	MakeTheLayout()
 End
 
 Function LabelTopTenWorkflow()
@@ -139,8 +141,9 @@ Function MakeVolcano(prefix1,prefix2,baseVal,pairOpt)
 	Duplicate/O ratioWave,ratioWave_log2
 	ratioWave_log2 = log(abs(ratioWave[p])) / log(2)
 	// assign colors
-	colorWave = (abs(ratioWave_log2 >= 1)) ? colorWave[p] + 1 : colorWave[p]
-	colorWave = (abs(allTwave < 0.05)) ? colorWave[p] + 2 : colorWave[p]
+	colorWave[] = (ratioWave_log2[p] >= 1 && abs(allTwave[p] <= 0.05)) ? 3 : colorWave[p]
+	colorWave[] = (ratioWave_log2[p] <= -1 && abs(allTwave[p] <= 0.05)) ? 2 : colorWave[p]
+	colorWave[] = (ratioWave_log2[p] >= 1 && abs(allTwave[p] > 0.05)) ? 1 : colorWave[p]
 End
 
 STATIC Function TransformImputeBaseVal(m0,baseVal)
@@ -182,14 +185,15 @@ STATIC Function TransformImputeBaseVal(m0,baseVal)
 End
 
 Function MakeVPlot()
-	WAVE allTWave,ratioWave_log2,colorWave,colorTableWave
+	WAVE/Z allTWave,ratioWave_log2,colorWave,colorTableWave
+	WAVE/Z/T volcanoLabelWave
 	KillWindow/Z volcanoPlot
 	Display/N=volcanoPlot/W=(35,45,430,734) allTWave vs ratioWave_log2
 	SetAxis/W=volcanoPlot/A/R/N=1 left
 	ModifyGraph/W=volcanoPlot log(left)=1
 	Variable maxVar = max(wavemax(ratioWave_log2),abs(wavemin(ratioWave_log2)))
 	Variable minPVar = wavemin(allTWave)
-		minPVar = 10 ^ (floor((log(minPVar))))
+	minPVar = 10 ^ (floor((log(minPVar))))
 	SetAxis/W=volcanoPlot bottom -maxVar,maxVar
 	ModifyGraph/W=volcanoPlot mode=3,marker=19,mrkThick=0
 	SetDrawEnv/W=volcanoPlot xcoord= bottom,ycoord= left,dash= 3;DelayUpdate
@@ -198,7 +202,8 @@ Function MakeVPlot()
 	DrawLine/W=volcanoPlot 0,1,0,minPVar
 	ModifyGraph/W=VolcanoPlot zColor(allTWave)={colorWave,0,3,cindexRGB,0,colorTableWave}
 	Label/W=VolcanoPlot left "P-Value"
-	Label/W=VolcanoPlot bottom "Test / Control (Log\\B2\\M)"
+	String labelStr = volcanoLabelWave[0] + " / " + volcanoLabelWave[1] + " (Log\\B2\\M)"
+	Label/W=VolcanoPlot bottom labelStr
 	SetWindow VolcanoPlot, hook(modified)=thunk_hook
 End
 
@@ -224,10 +229,31 @@ Function TableInterestingValues()
 	Edit/N=rankTable/W=(432,45,942,734) so_NAME, so_SHORTNAME, so_productWave, so_colorWave, so_allTWave, so_ratioWave, so_keyW
 End
 
+Function AddSignificantHitsToVolcano()
+	WAVE/Z so_colorWave
+	WAVE/Z/T so_SHORTNAME
+	String labelStr = "\Z09"
+	
+	Variable nRows = numpnts(so_ColorWave)
+	Variable i
+	
+	for(i = 0; i < nRows; i += 1)
+		if(so_colorWave[i] == 3)
+			if(strlen(so_SHORTNAME[i]) > 0)
+				labelStr += so_SHORTNAME[i] + "\r"
+			endif
+		elseif(so_colorWave[i] == 2)
+			break
+		endif
+	endfor
+	
+	TextBox/W=volcanoPlot/C/N=topProts/F=0/A=LT/X=0.00/Y=0.00 labelStr
+End
+
 Function MakeMeanComparison()
 	KillWindow/Z meanPlot
-	WAVE/Z meanCond1,meanCond2
-	WAVE/Z colorWave,colorTableWave
+	WAVE/Z meanCond1,meanCond2,colorWave,colorTableWave
+	WAVE/Z/T volcanoLabelWave
 	if(!WaveExists(meanCond1) || !WaveExists(meanCond2))
 		Print "Error: no mean waves."
 		return -1
@@ -245,8 +271,8 @@ Function MakeMeanComparison()
 	ModifyGraph/W=meanPlot mode=3,marker=19
 	ModifyGraph/W=meanPlot zColor(meanCond1)={colorWave,0,3,cindexRGB,0,colorTableWave}
 	ModifyGraph/W=meanPlot msize=3,mrkThick=0
-	Label/W=meanPlot left "Condition 1"
-	Label/W=meanPlot bottom "Condition 2"
+	Label/W=meanPlot left volcanoLabelWave[0]
+	Label/W=meanPlot bottom volcanoLabelWave[1]
 	SetWindow meanPlot, hook(modified)=thunk_hook
 End
 
@@ -277,11 +303,11 @@ Function DoThePCA()
 	if(!WaveExists(colorWave) || nProt != DimSize(forPCA,0))
 		Make/O/N=(nProt) colorWave=0
 		MakeColorTableWave()
-		WAVE colorTableWave
+		WAVE/Z colorTableWave
 	endif
 	if(!WaveExists(colorTableWave))
 		MakeColorTableWave()
-		WAVE colorTableWave
+		WAVE/Z colorTableWave
 	endif
 	// pre-process matrix, centre on 0, sd of 1
 	// we're interested in Rows (proteins) not Cols (expts)
@@ -292,12 +318,16 @@ Function DoThePCA()
 	// do the PCA, SRMT flag is needed to get M_R
 	PCA/ALL/SRMT forPCA
 	WAVE/Z M_R
+	// make a version of colorwave to display interesting proteins
+	WAVE/Z allTWave
+	Duplicate/O colorWave, colorPCAWave
+	colorPCAWave[] = (abs(allTwave[p] > 0.05)) ? NaN : colorWave[p]
 	// display PC1 and PC2
 	Display/N=pcaPlot/W=(36,757,431,965) M_R[][1] vs M_R[][0]
 	SetAxis/W=pcaPlot left -1,1
 	SetAxis/W=pcaPlot bottom -1,1
 	ModifyGraph/W=pcaPlot mode=3,marker=19,msize=2,mrkThick=0
-	ModifyGraph/W=pcaPlot zColor(M_R)={colorWave,0,3,ctableRGB,0,colorTableWave}
+	ModifyGraph/W=pcaPlot zColor(M_R)={colorPCAWave,0,3,ctableRGB,0,colorTableWave}
 	ModifyGraph/W=pcaPlot zero=4,mirror=1
 	Label/W=pcaPlot left "PC2"
 	Label/W=pcaPlot bottom "PC1"
@@ -323,27 +353,48 @@ Function LabelTopXProts(numProteins)
 	endfor
 End
 
+STATIC Function MakeTheLayout()
+	KillWindow/Z summaryLayout
+	NewLayout/N=summaryLayout
+	
+	AppendLayoutObject/W=summaryLayout graph meanPlot
+	AppendLayoutObject/W=summaryLayout graph pcaPlot
+	AppendLayoutObject/W=summaryLayout graph volcanoPlot
+	LayoutPageAction/W=summaryLayout size(-1)=(595, 842), margins(-1)=(18, 18, 18, 18)
+	ModifyLayout/W=summaryLayout units=0
+	ModifyLayout/W=summaryLayout frame=0,trans=1
+	
+	ModifyLayout/W=summaryLayout left(meanPlot)=322,top(meanPlot)=21,width(meanPlot)=258,height(meanPlot)=222
+	ModifyLayout/W=summaryLayout left(pcaPlot)=322,top(pcaPlot)=244,width(pcaPlot)=260,height(pcaPlot)=224
+	ModifyLayout/W=summaryLayout left(volcanoPlot)=21,top(volcanoPlot)=21,height(volcanoPlot)=450,width(volcanoPlot)=320
+End
+
 
 ////////////////////////////////////////////////////////////////////////
 // Panel functions
 ////////////////////////////////////////////////////////////////////////
 
 Function VolcanoIO_Panel()
-	WAVE/Z/T volcanoPrefixWave
+	WAVE/Z/T volcanoPrefixWave, volcanoLabelWave
 	if(!WaveExists(volcanoPrefixWave))
 		MAKE/O/N=(2)/T volcanoPrefixWave = {"prefix1*","prefix2*"}
+		MAKE/O/N=(2)/T volcanoLabelWave = {"Test","Control"}
 	endif
 	String prefix1 = volcanoPrefixWave[0]
 	String prefix2 = volcanoPrefixWave[1]
+	String label1 = volcanoLabelWave[0]
+	String label2 = volcanoLabelWave[1]
 	Variable baseVal = 0
 	Variable pairOpt = 0
 	
 	DoWindow/K VolcanoSetup
 	NewPanel/N=VolcanoSetup/K=1/W=(81,73,774,200)
-	SetVariable box1,pos={86,13},size={500,14},title="Prefix for condition 1 (test)",value=_STR:prefix1
-	SetVariable box2,pos={86,44},size={500,14},title="Prefix for condition 2 (ctrl)",value=_STR:prefix2
-	SetVariable box3,pos={29,75},size={300,14},title="What value represents absent proteins?",format="%g",value=_NUM:baseVal
-	CheckBox box4,pos={208,106},size={20,20},title="Analyse paired data?",value=pairOpt,mode=0
+	SetVariable box1,pos={76,13},size={200,14},title="Prefix for condition 1 (test):",value=_STR:prefix1
+	SetVariable box2,pos={76,44},size={200,14},title="Prefix for condition 2 (ctrl):",value=_STR:prefix2
+	SetVariable box3,pos={276,13},size={200,14},title="Label for condition 1:",value=_STR:label1
+	SetVariable box4,pos={276,44},size={200,14},title="Label for condition 2:",value=_STR:label2
+	SetVariable box5,pos={19,75},size={250,14},title="What value represents absent proteins?",format="%g",value=_NUM:baseVal
+	CheckBox box6,pos={208,106},size={20,20},title="Analyse paired data?",value=pairOpt,mode=0
 	Button DoIt,pos={564,100},size={100,20},proc=ButtonProc,title="Do It"
 End
  
@@ -357,16 +408,22 @@ Function ButtonProc(ba)
 	ControlInfo/W=$ba.win box2
 	String prefix2 = S_Value
 	ControlInfo/W=$ba.win box3
-	Variable baseVal = V_Value
+	String label1 = S_Value
 	ControlInfo/W=$ba.win box4
+	String label2 = S_Value
+	ControlInfo/W=$ba.win box5
+	Variable baseVal = V_Value
+	ControlInfo/W=$ba.win box6
 	Variable pairOpt = V_Value
-	Print "Test group:", prefix1, "Control group:", prefix2, "Value for imputation:", baseVal
+	Print "Test group:", prefix1, "Labelled", label1, "\rControl group:", prefix2, "Labelled", label1, "\rValue for imputation:", baseVal
 	if(pairOpt == 1)
 		Print "Using paired data."
 	endif
-	WAVE/Z/T 	volcanoPrefixWave
+	WAVE/Z/T 	volcanoPrefixWave, volcanoLabelWave
 	volcanoPrefixWave[0] = prefix1
 	volcanoPrefixWave[1] = prefix2
+	volcanoLabelWave[0] = label1
+	volcanoLabelWave[1] = label2
 	VolcanoWorkflowWrapper(prefix1,prefix2,baseVal,pairOpt)
 End
 
