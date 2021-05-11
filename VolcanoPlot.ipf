@@ -17,6 +17,8 @@ Menu "Macros"
 		"Volcano Plot...", /Q, VolcanoIO_Panel()
 		"PCA Only...", /Q, MakePCAWaveSelectorPanel()
 		"Label Top 10", /Q, LabelTopTenWorkflow()
+		"Count Comparison", /Q, MakeTheComparison()
+		"Save Layout", /Q, SaveTheLayout()
 	end
 End
 
@@ -39,6 +41,7 @@ Function VolcanoWorkflowWrapper(STRING prefix1,STRING prefix2,VARIABLE baseVal,V
 	MakeMeanComparison()
 	FromVolcanoToPCA()
 	MakeTheLayout()
+//	SaveTheLayout()
 End
 
 Function LabelTopTenWorkflow()
@@ -55,6 +58,7 @@ Function LoadMaxQuantFile()
 	if (strlen(S_Path) == 0) // user pressed cancel
 		return -1
 	endif
+	NewPath/O/Q DiskFolder, S_Path
 	WAVE/Z/T Gene_names, Protein_names
 	Duplicate/O Gene_names, root:SHORTNAME
 	Duplicate/O Protein_names, root:NAME
@@ -247,7 +251,7 @@ Function AddSignificantHitsToVolcano()
 		endif
 	endfor
 	
-	TextBox/W=volcanoPlot/C/N=topProts/F=0/A=LT/X=0.00/Y=0.00 labelStr
+	TextBox/W=volcanoPlot/C/N=topProts/B=1/F=0/A=LT/X=0.00/Y=0.00 labelStr
 End
 
 Function MakeMeanComparison()
@@ -353,6 +357,54 @@ Function LabelTopXProts(numProteins)
 	endfor
 End
 
+Function MakeTheComparison()
+	WAVE/Z/T volcanoPrefixWave, volcanoLabelWave
+	WAVE/Z colorWave, colorTableWave
+	Duplicate/O colorWave, highlightWave
+	// use original values (no imputation)
+	Concatenate/O/NP=1 WaveList(volcanoPrefixWave[0],";",""), countCond1
+	Concatenate/O/NP=1 WaveList(volcanoPrefixWave[1],";",""), countCond2
+	Variable nCol1 = DimSize(countCond1,1)
+	Variable nCol2 = DimSize(countCond2,1)
+	MatrixOp/O countCond1 = sumRows(countCond1) / nCol1
+	MatrixOp/O countCond2 = sumRows(countCond2) / nCol2
+	Variable maxVal = max(WaveMax(countCond1),WaveMax(countCond2))
+	KillWindow/Z compPlot
+	Display/N=compPlot/W=(436,757,700,965) countCond1 vs countCond2
+	SetAxis/W=compPlot left 0,maxVal
+	SetAxis/W=compPlot bottom 0,maxVal
+	ModifyGraph/W=compPlot mode=3,marker=19,msize=2,mrkThick=0
+	Label/W=compPlot left VolcanoLabelWave[0]
+	Label/W=compPlot bottom VolcanoLabelWave[1]
+	ModifyGraph/W=compPlot width={Aspect,1}
+	ModifyGraph/W=compPlot zColor(countCond1)={highlightWave,0,3,ctableRGB,0,colorTableWave}
+	SetWindow compPlot, hook(modified)=thunk_hook
+End
+
+// use a semi-colon separated list of protein names to highlight
+Function HighlightTheseProteins(myList)
+	String myList
+	
+	WAVE/Z highlightWave
+	if(!WaveExists(highlightWave))
+		WAVE/Z colorWave
+		Duplicate/O colorWave, highlightWave
+	endif
+	
+	WAVE/Z/T SHORTNAME
+	Variable nProteins = ItemsInList(myList)
+	highlightWave = 0
+	String proteinName
+	
+	Variable i
+	
+	for(i = 0; i < nProteins; i += 1)
+		proteinName = StringFromList(i, myList)
+		FindValue/TEXT=proteinName/TXOP=2 SHORTNAME
+		highlightWave[V_Value] = 3
+	endfor
+End
+
 STATIC Function MakeTheLayout()
 	KillWindow/Z summaryLayout
 	NewLayout/N=summaryLayout
@@ -367,6 +419,14 @@ STATIC Function MakeTheLayout()
 	ModifyLayout/W=summaryLayout left(meanPlot)=322,top(meanPlot)=21,width(meanPlot)=258,height(meanPlot)=222
 	ModifyLayout/W=summaryLayout left(pcaPlot)=322,top(pcaPlot)=244,width(pcaPlot)=260,height(pcaPlot)=224
 	ModifyLayout/W=summaryLayout left(volcanoPlot)=21,top(volcanoPlot)=21,height(volcanoPlot)=450,width(volcanoPlot)=320
+End
+
+Function SaveTheLayout()
+	WAVE/Z/T volcanoLabelWave
+	String fileName = "summaryLayout_" + volcanoLabelWave[0] + "vs" + volcanoLabelWave[1] + ".pdf"
+	SavePICT/O/WIN=summaryLayout/P=DiskFolder/E=-2/W=(0,0,0,0) as fileName
+	fileName = "summaryLayout_" + volcanoLabelWave[0] + "vs" + volcanoLabelWave[1] + ".png"
+	SavePICT/O/WIN=summaryLayout/P=DiskFolder/E=-5/RES=300 as fileName
 End
 
 
