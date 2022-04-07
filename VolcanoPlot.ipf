@@ -1,5 +1,6 @@
-#pragma TextEncoding = "MacRoman"
-#pragma rtGlobals=3		// Use modern global access method and strict wave access.
+#pragma TextEncoding = "UTF-8"
+#pragma rtGlobals=3				// Use modern global access method and strict wave access
+#pragma DefaultTab={3,20,4}		// Set default tab width in Igor Pro 9 and later
 #include <WaveSelectorWidget>
 #include <PopupWaveSelector>
 
@@ -32,8 +33,8 @@ Function LoadMaxQuantData()
 	endif
 End
 
-Function VolcanoWorkflowWrapper(STRING prefix1,STRING prefix2,VARIABLE baseVal,VARIABLE pairOpt)
-	MakeVolcano(prefix1,prefix2,baseVal,pairOpt)
+Function VolcanoWorkflowWrapper(STRING prefix1,STRING prefix2,VARIABLE baseVal,VARIABLE pairOpt,VARIABLE foldChange)
+	MakeVolcano(prefix1,prefix2,baseVal,pairOpt, foldChange)
 	MakeColorTableWave()
 	MakeVPlot()
 	TableInterestingValues()
@@ -54,7 +55,7 @@ End
 
 Function LoadMaxQuantFile()
 	NewDataFolder/O/S root:data 
-	LoadWave/A/D/J/K=0/L={0,0,0,0,0}/W/O/Q ""
+	LoadWave/A/D/J/K=0/L={0,0,0,0,0}/V={"\t","",0,0}/W/O/Q ""
 	if (strlen(S_Path) == 0) // user pressed cancel
 		return -1
 	endif
@@ -82,9 +83,10 @@ End
 /// @param	prefix2	string prefix that will select all waves of condition1
 /// @param	baseVal	proteins that are absent have this value
 /// @param  pairOpt	1 is paired, 0 is not
-Function MakeVolcano(prefix1,prefix2,baseVal,pairOpt)
-	String prefix1,prefix2
-	Variable baseVal,pairOpt
+/// @param  foldChange	log2 value for threshold i.e. 1 is 2-fold change
+Function MakeVolcano(prefix1,prefix2,baseVal,pairOpt, foldChange)
+	String prefix1, prefix2
+	Variable baseVal, pairOpt, foldChange
 	
 	String wList1 = WaveList(prefix1,";","")
 	String wList2 = WaveList(prefix2,";","")
@@ -145,9 +147,9 @@ Function MakeVolcano(prefix1,prefix2,baseVal,pairOpt)
 	Duplicate/O ratioWave,ratioWave_log2
 	ratioWave_log2 = log(abs(ratioWave[p])) / log(2)
 	// assign colors
-	colorWave[] = (ratioWave_log2[p] >= 1 && abs(allTwave[p] <= 0.05)) ? 3 : colorWave[p]
-	colorWave[] = (ratioWave_log2[p] <= -1 && abs(allTwave[p] <= 0.05)) ? 2 : colorWave[p]
-	colorWave[] = (ratioWave_log2[p] >= 1 && abs(allTwave[p] > 0.05)) ? 1 : colorWave[p]
+	colorWave[] = (ratioWave_log2[p] >= foldChange && abs(allTwave[p] <= 0.05)) ? 3 : colorWave[p]
+	colorWave[] = (ratioWave_log2[p] <= -foldChange && abs(allTwave[p] <= 0.05)) ? 2 : colorWave[p]
+	colorWave[] = (ratioWave_log2[p] >= foldChange && abs(allTwave[p] > 0.05)) ? 1 : colorWave[p]
 End
 
 STATIC Function TransformImputeBaseVal(m0,baseVal)
@@ -446,6 +448,7 @@ Function VolcanoIO_Panel()
 	String label2 = volcanoLabelWave[1]
 	Variable baseVal = 0
 	Variable pairOpt = 0
+	Variable foldChange = 2
 	
 	DoWindow/K VolcanoSetup
 	NewPanel/N=VolcanoSetup/K=1/W=(81,73,774,200)
@@ -453,8 +456,9 @@ Function VolcanoIO_Panel()
 	SetVariable box2,pos={76,44},size={200,14},title="Prefix for condition 2 (ctrl):",value=_STR:prefix2
 	SetVariable box3,pos={276,13},size={200,14},title="Label for condition 1:",value=_STR:label1
 	SetVariable box4,pos={276,44},size={200,14},title="Label for condition 2:",value=_STR:label2
-	SetVariable box5,pos={19,75},size={250,14},title="What value represents absent proteins?",format="%g",value=_NUM:baseVal
-	CheckBox box6,pos={208,106},size={20,20},title="Analyse paired data?",value=pairOpt,mode=0
+	SetVariable box5,pos={30,75},size={250,14},title="What value represents absent proteins?",format="%g",value=_NUM:baseVal
+	SetVariable box6,pos={30,94},size={250,14},title="Fold-change (2 is twofold)?",format="%g",value=_NUM:foldChange
+	CheckBox box7,pos={308,92},size={20,20},title="Analyse paired data?",value=pairOpt,mode=0
 	Button DoIt,pos={564,100},size={100,20},proc=ButtonProc,title="Do It"
 End
  
@@ -474,6 +478,8 @@ Function ButtonProc(ba)
 	ControlInfo/W=$ba.win box5
 	Variable baseVal = V_Value
 	ControlInfo/W=$ba.win box6
+	Variable foldChange = V_Value
+	ControlInfo/W=$ba.win box7
 	Variable pairOpt = V_Value
 	Print "Test group:", prefix1, "Labelled", label1, "\rControl group:", prefix2, "Labelled", label1, "\rValue for imputation:", baseVal
 	if(pairOpt == 1)
@@ -484,7 +490,8 @@ Function ButtonProc(ba)
 	volcanoPrefixWave[1] = prefix2
 	volcanoLabelWave[0] = label1
 	volcanoLabelWave[1] = label2
-	VolcanoWorkflowWrapper(prefix1,prefix2,baseVal,pairOpt)
+	Variable logFC = log(abs(foldChange)) / log(2)
+	VolcanoWorkflowWrapper(prefix1,prefix2,baseVal,pairOpt,logFC)
 End
 
 Function MakePCAWaveSelectorPanel()
