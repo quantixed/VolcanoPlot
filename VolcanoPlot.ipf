@@ -16,6 +16,11 @@ Menu "Macros"
 	SubMenu "Proteomics"
 		"Load MaxQuant Data...", /Q, LoadMaxQuantData()
 		"Volcano Plot...", /Q, VolcanoIO_Panel()
+		SubMenu "Subcellular analysis"
+			"Make List to Retrieve Uniprot Data", /Q, UniprotTable()
+			"Load and Match UniProt Data...", /Q, UniprotWrapper()
+			"Filter for GO Term(s)", /Q, GOTerm_Panel()
+		end
 		"PCA Only...", /Q, MakePCAWaveSelectorPanel()
 		"Label Top 10", /Q, LabelTopTenWorkflow()
 		"Count Comparison", /Q, MakeTheComparison()
@@ -43,6 +48,24 @@ Function VolcanoWorkflowWrapper(STRING prefix1,STRING prefix2,VARIABLE baseVal,V
 	FromVolcanoToPCA()
 	MakeTheLayout()
 //	SaveTheLayout()
+End
+
+Function UniprotWrapper()
+	if(LoadUniprot() == 0)
+		MatchResultsAndUniProt()
+	endif
+	if(FilterGOTerms() == 0)
+		// build listbox that allows multiple selections
+		GOTerm_Panel()
+		// this panel triggers FilteredVolcanoWorkflowWrapper()
+	endif
+	// use selections to filter gene-names that feature the GO terms
+	// plot volcano using only those gene_names
+End
+
+Function FilteredVolcanoWorkflowWrapper()
+	FilterForGOTerms()
+	MakeFilteredVPlot()
 End
 
 Function LabelTopTenWorkflow()
@@ -93,6 +116,8 @@ Function MakeVolcano(prefix1,prefix2,baseVal,pairOpt, foldChange)
 	if(ItemsInList(wList1) == 0 || ItemsInList(wList2) == 0)
 		DoAlert 0, "Missing data"
 		return -1
+	else
+		Print "Test runs:", ItemsInList(wList1), "\rControl runs:", ItemsInList(wList2)
 	endif
 	// make sure the lists are in order
 	wList1 = SortList(wList1)
@@ -145,7 +170,7 @@ Function MakeVolcano(prefix1,prefix2,baseVal,pairOpt, foldChange)
 	MatrixOp/O ratioWave = meanCond1 / meanCond2
 	
 	Duplicate/O ratioWave,ratioWave_log2
-	ratioWave_log2 = log(abs(ratioWave[p])) / log(2)
+	ratioWave_log2[] = log(abs(ratioWave[p])) / log(2)
 	// assign colors
 	colorWave[] = (ratioWave_log2[p] >= foldChange && abs(allTwave[p] <= 0.05)) ? 3 : colorWave[p]
 	colorWave[] = (ratioWave_log2[p] <= -foldChange && abs(allTwave[p] <= 0.05)) ? 2 : colorWave[p]
@@ -431,6 +456,221 @@ Function SaveTheLayout()
 	SavePICT/O/WIN=summaryLayout/P=DiskFolder/E=-5/RES=300 as fileName
 End
 
+// This function will load an output from UniProt.
+// Using a list of gene names from VolcanoPlot output (via copy/paste), query in UniProt ID mapping
+// select columns for Gene ontology (cellular component) & Subcellular location [CC]
+Function LoadUniprot()
+	if(!DataFolderExists("root:data"))
+		NewDataFolder/O root:data
+	endif
+	NewDataFolder/O/S root:data:uniprot
+	// load the tab-separated output downloaded from UniProt	
+	LoadWave/A/D/J/K=0/L={0,0,0,0,0}/V={"\t","",0,0}/W/O/Q ""
+	if (strlen(S_Path) == 0) // user pressed cancel
+		return -1
+	endif
+	
+	SetDataFolder root:
+	return 0
+End
+
+Function UniprotTable()
+	WAVE/Z/T SHORTNAME
+	Duplicate/O/T SHORTNAME, clickMe
+	DeleteEmptyCellsFromTextWave(clickMe)
+	KillWindow/Z closeTableWhenFinished
+	Edit/N=closeTableWhenFinished/K=1 clickMe as "Close this table when finished"
+	DoAlert 0, "Click `clickMe` to select the column.\rCopy data to clipboard and use at:\rhttps://www.uniprot.org/uploadlists"
+End
+
+Function MatchResultsAndUniprot()
+	// first we need to check that we have results and uniprot data
+	SetDataFolder root:
+	WAVE/Z/T SHORTNAME
+	if(!WaveExists(SHORTNAME))
+		Print "Proteomics data not loaded"
+		return -1
+	endif
+	Wave/Z/T Gene_names = root:data:uniprot:Gene_names
+	Wave/Z/T GOw = root:data:uniprot:Gene_ontology__cellular_component_
+	Wave/Z/T SCw = root:data:uniprot:Subcellular_location__CC_
+	if(!WaveExists(Gene_names) || !WaveExists(GOw) || !WaveExists(SCw))
+		Print "Uniprot data not loaded"
+		return -1
+	endif
+	
+	Variable nHits = numpnts(SHORTNAME)
+	Variable nGenes = numpnts(Gene_names)
+	
+	// first make a textwave of Gene_names where the alternatives are semi-colon separated
+	Duplicate/O/FREE/T Gene_Names, gnW
+	gnW[] = ReplaceString(" ",gnW[p],";") + ";"
+	// make the wave to hold the GO terms and subcellular info
+	Make/O/T/N=(nHits) GO_Terms, SC_Terms
+	String sName, gNameList
+	Variable matchVar
+	
+	Variable i,j,k
+	
+	for(i = 0; i < nHits; i += 1)
+		sName = SHORTNAME[i]
+		if(strlen(sName) == 0)
+			continue
+		endif
+		matchVar = 0
+		
+		for(j = 0; j < nGenes; j += 1)
+			gNameList = Gene_names[j]
+			
+			for(k = 0; k < ItemsInList(gNameList); k += 1)
+				if(cmpstr(sName,StringFromList(k,gNameList)) == 0)
+					GO_Terms[i] = GOw[j]
+					SC_Terms[i] = SCw[j]
+					matchVar = 1
+					break
+				endif
+			endfor
+			// if we found a match we will break and go back to i
+			if(matchVar == 1)
+				break
+			endif
+		endfor
+	endfor
+	
+	// now map across to sorted wave if it is there. If it isn't Volcano plot won't map them as the code stands now
+	WAVE/Z so_KeyW
+	if(!WaveExists(so_KeyW))
+		return -1
+	endif
+	Make/O/T/N=(numpnts(so_KeyW)) so_GO_Terms = GO_Terms[so_keyW[p]]
+	Make/O/T/N=(numpnts(so_KeyW)) so_SC_Terms = SC_Terms[so_keyW[p]]
+End
+
+Function FilterGOTerms()
+	WAVE/Z GO_Terms
+	Duplicate/O/FREE/T GO_Terms, tempGT
+	// we might have a space at the beginning of each item
+//	tempGT[] = SelectString(cmpstr(" ",tempGT[p][0][0][0][0]),tempGT[p][0][0][0][1,strlen(tempGT[p])-1],tempGT[p])
+	DeleteEmptyCellsFromTextWave(tempGT)
+	tempGT[] = ReplaceString("; ",tempGT[p],";")
+	// make list of all GO Terms. Rows have multiple GO terms separated by semi-colon
+	// row does not terminate with semicolon
+	String goList
+	wfprintf goList, "%s;", tempGT
+	// Case-insensitive alphanumeric sort
+	goList = SortList(goList,";",8)
+	// convert to text wave
+	Wave/T bigGOw = ListToTextWave(goList,";")
+	FindDuplicates/RT=all_GO_Terms bigGOw
+	WAVE/Z/T all_GO_terms
+	Make/O/N=(numpnts(all_GO_Terms))/B all_GO_Terms_sel = 0
+	
+	return 0
+End
+
+Function FilterForGOTerms()
+	// first make a textwave of the GO terms we will filter for
+	WAVE/Z/T all_GO_Terms
+	WAVE/Z all_GO_Terms_sel
+	Duplicate/O/T all_GO_Terms, filter_GO_Terms
+	filter_GO_Terms[] = SelectString(all_GO_Terms_sel[p],"",all_GO_Terms[p])
+	DeleteEmptyCellsFromTextWave(filter_GO_Terms)
+	Variable nGOT = numpnts(filter_GO_Terms)
+	
+	WAVE/Z/T GO_Terms
+	Variable nGenes = numpnts(GO_Terms)
+	Make/O/N=(nGenes)/B GO_Terms_nFilter = 0 // zero is delete, 1 is keep
+	String gostring
+	
+	Variable i,j
+	
+	for(i = 0; i < nGenes; i += 1)
+		gostring = GO_Terms[i]
+		
+		for(j = 0; j < nGOT; j += 1)
+			if(strsearch(gostring,filter_GO_Terms[j],0,2) >= 0)
+				// we have a hit
+				GO_Terms_nFilter[i] = 1
+				break
+			endif
+		endfor
+	endfor
+	// now let's filter - we'll do it by duplicate and delete
+	// we need all of these except productWave
+	WAVE/Z so_allTWave, so_colorWave, so_keyW, so_productWave, so_ratioWave
+	WAVE/Z/T so_GO_Terms, so_NAME, so_SC_Terms, so_SHORTNAME
+	nGenes = numpnts(so_keyW)
+	Duplicate/O so_allTWave, ft_allTWave
+	Duplicate/O so_colorWave, ft_colorWave
+	Duplicate/O so_keyW, ft_keyW
+	Duplicate/O so_ratioWave, ft_ratioWave
+	Duplicate/O/T so_GO_Terms, ft_GO_Terms
+	Duplicate/O/T so_NAME, ft_NAME
+	Duplicate/O/T so_SC_Terms, ft_SC_Terms
+	Duplicate/O/T so_SHORTNAME, ft_SHORTNAME
+	
+	for(i = 0; i < nGenes; i += 1)
+		if(GO_Terms_nFilter[so_keyW[i]] != 1) // delete
+			ft_allTWave[i] = NaN
+			ft_colorWave[i] = NaN
+			ft_keyW[i] = NaN
+			ft_ratioWave[i] = NaN
+			ft_GO_Terms[i] = ""
+			ft_NAME[i] = ""
+			ft_SC_Terms[i] = ""
+			ft_SHORTNAME[i] = ""
+		else
+			// duplicate means that data should be in place, however we may have blanks in Text waves
+			// GO_Terms should not need checking
+			if(strlen(ft_NAME[i]) == 0)
+				ft_NAME[i] = "noName"
+			endif
+			if(strlen(ft_SC_Terms[i]) == 0)
+				ft_SC_Terms[i] = "noInfo"
+			endif
+			if(strlen(ft_SHORTNAME[i]) == 0)
+				ft_SHORTNAME[i] = "noName"
+			endif
+		endif
+	endfor
+	WaveTransform ZapNans ft_allTWave
+	WaveTransform ZapNans ft_colorWave
+	WaveTransform ZapNans ft_keyW
+	WaveTransform ZapNans ft_ratioWave
+	// need ratiowave log2 for plotting
+	Duplicate/O ft_ratioWave, ft_ratioWave_log2
+	ft_ratioWave_log2[] = log(abs(ft_ratioWave[p])) / log(2)
+	DeleteEmptyCellsFromTextWave(ft_GO_Terms)
+	DeleteEmptyCellsFromTextWave(ft_NAME)
+	DeleteEmptyCellsFromTextWave(ft_SC_Terms)
+	DeleteEmptyCellsFromTextWave(ft_SHORTNAME)
+	KillWindow/Z ftRankTable
+	Edit/N=ftRankTable/W=(432,45,942,734) ft_NAME, ft_SHORTNAME, ft_GO_Terms, FT_SC_Terms, ft_colorWave, ft_allTWave, ft_ratioWave, ft_keyW
+End
+
+Function MakeFilteredVPlot()
+	String plotName = "ftVolcanoPlot"
+	WAVE/Z ft_allTWave,ft_ratioWave_log2,ft_colorWave,colorTableWave
+	WAVE/Z/T volcanoLabelWave
+	KillWindow/Z $plotName
+	Display/N=$plotName/W=(35,45,430,734) ft_allTWave vs ft_ratioWave_log2
+	SetAxis/W=$plotName/A/R/N=1 left
+	ModifyGraph/W=$plotName log(left)=1
+	Variable maxVar = max(wavemax(ft_ratioWave_log2),abs(wavemin(ft_ratioWave_log2)))
+	Variable minPVar = wavemin(ft_allTWave)
+	minPVar = 10 ^ (floor((log(minPVar))))
+	SetAxis/W=$plotName bottom -maxVar,maxVar
+	ModifyGraph/W=$plotName mode=3,marker=19,mrkThick=0
+	SetDrawEnv/W=$plotName xcoord= bottom,ycoord= left,dash= 3;DelayUpdate
+	DrawLine/W=$plotName -maxVar,0.05,maxVar,0.05
+	SetDrawEnv/W=$plotName xcoord= bottom,ycoord= left,dash= 3
+	DrawLine/W=$plotName 0,1,0,minPVar
+	ModifyGraph/W=$plotName zColor(ft_allTWave)={ft_colorWave,0,3,cindexRGB,0,colorTableWave}
+	Label/W=$plotName left "P-Value"
+	String labelStr = volcanoLabelWave[0] + " / " + volcanoLabelWave[1] + " (Log\\B2\\M)"
+	Label/W=$plotName bottom labelStr
+	SetWindow $plotName, hook(modified)=filt_thunk_hook
+End
 
 ////////////////////////////////////////////////////////////////////////
 // Panel functions
@@ -442,6 +682,7 @@ Function VolcanoIO_Panel()
 		MAKE/O/N=(2)/T volcanoPrefixWave = {"prefix1*","prefix2*"}
 		MAKE/O/N=(2)/T volcanoLabelWave = {"Test","Control"}
 	endif
+	// they are called prefix but suffix (or any wildcard search string is fine)
 	String prefix1 = volcanoPrefixWave[0]
 	String prefix2 = volcanoPrefixWave[1]
 	String label1 = volcanoLabelWave[0]
@@ -452,8 +693,8 @@ Function VolcanoIO_Panel()
 	
 	DoWindow/K VolcanoSetup
 	NewPanel/N=VolcanoSetup/K=1/W=(81,73,774,200)
-	SetVariable box1,pos={76,13},size={200,14},title="Prefix for condition 1 (test):",value=_STR:prefix1
-	SetVariable box2,pos={76,44},size={200,14},title="Prefix for condition 2 (ctrl):",value=_STR:prefix2
+	SetVariable box1,pos={30,13},size={240,14},title="Search string for condition 1 (test):",value=_STR:prefix1
+	SetVariable box2,pos={30,44},size={240,14},title="Search string for condition 2 (ctrl):",value=_STR:prefix2
 	SetVariable box3,pos={276,13},size={200,14},title="Label for condition 1:",value=_STR:label1
 	SetVariable box4,pos={276,44},size={200,14},title="Label for condition 2:",value=_STR:label2
 	SetVariable box5,pos={30,75},size={250,14},title="What value represents absent proteins?",format="%g",value=_NUM:baseVal
@@ -481,7 +722,8 @@ Function ButtonProc(ba)
 	Variable foldChange = V_Value
 	ControlInfo/W=$ba.win box7
 	Variable pairOpt = V_Value
-	Print "Test group:", prefix1, "Labelled", label1, "\rControl group:", prefix2, "Labelled", label1, "\rValue for imputation:", baseVal
+	Print "Test group:", prefix1, "Labelled", label1, "\rControl group:", prefix2, "Labelled", label2
+	Print "Value for imputation:", baseVal, "\rFold-change:", foldChange
 	if(pairOpt == 1)
 		Print "Using paired data."
 	endif
@@ -492,6 +734,53 @@ Function ButtonProc(ba)
 	volcanoLabelWave[1] = label2
 	Variable logFC = log(abs(foldChange)) / log(2)
 	VolcanoWorkflowWrapper(prefix1,prefix2,baseVal,pairOpt,logFC)
+End
+
+Function GOTerm_Panel()
+	WAVE/Z/T all_GO_Terms
+	WAVE/Z/T all_GO_Terms_sel
+	if(!WaveExists(all_GO_Terms) || !WaveExists(all_GO_Terms_Sel))
+		return -1
+	endif
+	String panelName = "GOTPanel"
+	KillWindow/Z $panelName
+	NewPanel/K=1/N=$panelName/W=(181,179,581,640) as "Select GO Terms"
+	ListBox lb1,pos={40,9},size={320,400},listWave=all_GO_terms,selWave=all_GO_Terms_sel,mode=9
+	Button reset,pos={40,434},size={100,20},proc=GOTProc,title="Reset"
+	Button filter,pos={271,434},size={100,20},proc=GOTProc,title="Filter"
+End
+
+Function GOTProc(ba) 
+	STRUCT WMButtonAction &ba
+	
+	if( ba.eventCode != 2 )
+		return 0
+	endif
+	
+	WAVE/Z all_GO_Terms_sel
+	WAVE/Z/T all_GO_Terms
+	
+	switch(ba.eventCode)
+		case 2:
+			if(cmpstr(ba.ctrlName,"reset") == 0)
+				all_GO_Terms_sel = 0
+				return 0
+			elseif(cmpstr(ba.ctrlName,"filter") == 0)
+				if(sum(all_GO_Terms_sel) == 0)
+					DoAlert 0, "No terms selected"
+					return -1
+				endif
+				// add how many we are filtering for
+				Print "Filtering for terms:", sum(all_GO_Terms_sel), "out of", numpnts(all_GO_terms)
+				FilteredVolcanoWorkflowWrapper()
+				// trigger next part
+				return 0
+			else
+				return -1
+			endif
+	endswitch
+	
+	return 0
 End
 
 Function MakePCAWaveSelectorPanel()
@@ -560,10 +849,50 @@ Function thunk_hook(s)
  
 end
 
+Function filt_thunk_hook(s)
+	Struct WMWinHookStruct& s
+	WAVE/Z ft_allTWave
+	WAVE/T/Z ft_SHORTNAME
+ 
+	strswitch (s.eventname)
+		case "mouseup":
+
+			String s_traceinfo = TraceFromPixel(s.mouseloc.h, s.mouseloc.v, "WINDOW:"+s.winname+";")
+			Variable v_pt = str2num(StringByKey("HITPOINT", s_traceinfo))
+			String targetTrace = StringByKey("TRACE", s_traceinfo) // now takes whatever trace is clicked on
+ 
+			if (numtype(v_pt) != 2)
+				Tag/c/n=t1/b=3/f=0/s=3/v=1/X=10/Y=10 $targetTrace, v_pt, ft_SHORTNAME[v_pt]
+			else
+				Tag/n=t1/k
+			endif
+			break
+ 
+		case "kill":
+			setwindow $(s.winname), hook(modified)=$""
+			break
+	endswitch
+ 
+end
+
 STATIC Function MakeColorTableWave()
 	Make/O/N=(4,4) colorTableWave = 32768
 	colorTableWave[1][0] = 65535
 	colorTableWave[3][0] = 65535
 	colorTableWave[2][2] = 65535
 	colorTableWave[3][2] = 65535
+End
+
+STATIC Function DeleteEmptyCellsFromTextWave(tw)
+	Wave/T tw
+	
+	Variable numPoints = numpnts(tw)
+	
+	Variable i
+	
+	for(i = numPoints - 1; i >= 0; i -= 1)
+		if(strlen(tw[i]) == 0)
+			DeletePoints i, 1, tw
+		endif   
+	endfor
 End
