@@ -4,11 +4,6 @@
 #include <WaveSelectorWidget>
 #include <PopupWaveSelector>
 
-// Figure in the TPD54 paper was generated with
-// https://github.com/quantixed/TPD54/commit/accb6a86619aa4668e5dadac655e55630e9a55f2
-// Load data into Igor and then run the command from the Macro menu.
-// Note that naming of the columns is important
-
 ////////////////////////////////////////////////////////////////////////
 // Menu items
 ////////////////////////////////////////////////////////////////////////
@@ -43,7 +38,7 @@ Function VolcanoWorkflowWrapper(STRING prefix1,STRING prefix2,VARIABLE baseVal,V
 	MakeColorTableWave()
 	MakeVPlot()
 	TableInterestingValues()
-	AddSignificantHitsToVolcano()
+	AddSignificantHitsToVolcano(0)
 	MakeMeanComparison()
 	FromVolcanoToPCA()
 	MakeTheLayout()
@@ -66,6 +61,8 @@ End
 Function FilteredVolcanoWorkflowWrapper()
 	FilterForGOTerms()
 	MakeFilteredVPlot()
+	AddSignificantHitsToVolcano(1)
+	AddGOTermsToVolcano()
 End
 
 Function LabelTopTenWorkflow()
@@ -260,25 +257,36 @@ Function TableInterestingValues()
 	Edit/N=rankTable/W=(432,45,942,734) so_NAME, so_SHORTNAME, so_productWave, so_colorWave, so_allTWave, so_ratioWave, so_keyW
 End
 
-Function AddSignificantHitsToVolcano()
-	WAVE/Z so_colorWave
-	WAVE/Z/T so_SHORTNAME
+Function AddSignificantHitsToVolcano(vpOpt)
+	Variable vpOpt // 0 is original VP, 1 is filtered VP
+	
+	String plotName
+	if(vpOpt == 0)
+		Wave/Z colorW = so_colorWave
+		Wave/Z/T shortnameW = so_SHORTNAME
+		plotName = "volcanoPlot"
+	else
+		Wave/Z colorW = ft_colorWave
+		Wave/Z/T shortnameW = ft_SHORTNAME
+		plotName = "ftVolcanoPlot"
+	endif
+	
 	String labelStr = "\Z09"
 	
-	Variable nRows = numpnts(so_ColorWave)
+	Variable nRows = numpnts(colorW)
 	Variable i
 	
 	for(i = 0; i < nRows; i += 1)
-		if(so_colorWave[i] == 3)
-			if(strlen(so_SHORTNAME[i]) > 0)
-				labelStr += so_SHORTNAME[i] + "\r"
+		if(colorW[i] == 3)
+			if(strlen(shortnameW[i]) > 0)
+				labelStr += shortnameW[i] + "\r"
 			endif
-		elseif(so_colorWave[i] == 2)
+		elseif(colorW[i] == 2)
 			break
 		endif
 	endfor
 	
-	TextBox/W=volcanoPlot/C/N=topProts/B=1/F=0/A=LT/X=0.00/Y=0.00 labelStr
+	TextBox/W=$plotName/C/N=topProts/B=1/F=0/A=LT/X=0.00/Y=0.00 labelStr
 End
 
 Function MakeMeanComparison()
@@ -670,6 +678,16 @@ Function MakeFilteredVPlot()
 	String labelStr = volcanoLabelWave[0] + " / " + volcanoLabelWave[1] + " (Log\\B2\\M)"
 	Label/W=$plotName bottom labelStr
 	SetWindow $plotName, hook(modified)=filt_thunk_hook
+End
+
+Function AddGOTermsToVolcano()
+	String plotName = "ftVolcanoPlot"
+	WAVE/Z/T filter_GO_Terms
+	
+	String labelStr
+	wfprintf labelStr, "%s\r", filter_GO_Terms
+	labelStr = "\Z08" + labelStr
+	TextBox/W=$plotName/C/N=GOTs/B=1/F=0/A=LT/X=15.00/Y=0.00 labelStr
 End
 
 ////////////////////////////////////////////////////////////////////////
