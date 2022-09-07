@@ -83,15 +83,32 @@ Function LoadMaxQuantFile()
 	WAVE/Z/T Gene_names, Protein_names
 	Duplicate/O Gene_names, root:SHORTNAME
 	Duplicate/O Protein_names, root:NAME
+	Wave/T SHORTNAME = $("root:SHORTNAME")
+	Wave/T NAME = $("root:NAME")
 	String wList = WaveList("LFQ_Intensity*",";","")
 	Variable nWaves = ItemsInList(wList)
-	String wName
+	String newList = "root:SHORTNAME;root:NAME;"
+	String wName, newName
 	
-	Variable i
+	Variable i,j
 	
 	for(i = 0; i < nWaves; i += 1)
 		wName = StringFromList(i,wList)
-		Duplicate/O $wName, $("root:" + ReplaceString("LFQ_Intensity_",wName,""))
+		newName = "root:" + ReplaceString("LFQ_Intensity_",wName,"")
+		Duplicate/O $wName, $newName
+		newList += newName + ";"
+	endfor
+	
+	// remove data where there is a blank in both SHORTNAME and NAME
+	nWaves = ItemsInList(newList)
+	Variable nRow = numpnts(Gene_Names)
+	
+	for(i = nRow - 1; i >= 0; i -= 1)
+		if(strlen(Gene_Names[i]) == 0 && strlen(Protein_names[i]) == 0)
+			for(j = 0; j < nWaves; j += 1)
+				DeletePoints i,1,$(StringFromList(j,newList))
+			endfor
+		endif
 	endfor
 	
 	SetDataFolder root:

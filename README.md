@@ -55,15 +55,15 @@ You should see these columns. Click save.
 
 We need to filter for Reviewed records, click here.
 
-![Screen05](img/uniprot05.png?raw=true)
+<img src="img/uniprot05.png" width="300">
 
 You should now have fewer records (only the reviewed ones). Now click download.
 
-![Screen06](img/uniprot06.png?raw=true)
+<img src="img/uniprot06.png" width="300">
 
 Select tab-separated file and Uncompressed.
 
-![Screen07](img/uniprot07.png?raw=true)
+<img src="img/uniprot07.png" width="300">
 
 Now, back in Igor select _Macros > Proteomics > Subcellular Analysis > Load and Match Uniprot Data..._
 
@@ -78,3 +78,5 @@ It is possible to do pairwise comparisons for the volcano plot by clicking the c
 The default is to look at a 2-fold change, but this can be changed in the dialog box.
 
 A PCA is generated for the selected data. If you want to compare some other data using PCA use the menu item. This is useful if you have more than two conditions and want to do a PCA on everything.
+
+Note that on loading of MaxQuant data, any rows that have no information for Gene Name or Protein Name (i.e. contaminants) are filtered out during the load prcedure.
