@@ -33,8 +33,8 @@ Function LoadMaxQuantData()
 	endif
 End
 
-Function VolcanoWorkflowWrapper(STRING prefix1,STRING prefix2,VARIABLE baseVal,VARIABLE pairOpt,VARIABLE foldChange)
-	MakeVolcano(prefix1,prefix2,baseVal,pairOpt, foldChange)
+Function VolcanoWorkflowWrapper(STRING prefix1,STRING prefix2,VARIABLE baseVal,VARIABLE pairOpt,VARIABLE seedOpt,VARIABLE foldChange)
+	MakeVolcano(prefix1,prefix2,baseVal,pairOpt,seedOpt,foldChange)
 	MakeColorTableWave()
 	MakeVPlot()
 	TableInterestingValues()
@@ -120,10 +120,11 @@ End
 /// @param	prefix2	string prefix that will select all waves of condition1
 /// @param	baseVal	proteins that are absent have this value
 /// @param  pairOpt	1 is paired, 0 is not
+/// @param  seedOpt	1 is paired, 0 is not
 /// @param  foldChange	log2 value for threshold i.e. 1 is 2-fold change
-Function MakeVolcano(prefix1,prefix2,baseVal,pairOpt, foldChange)
+Function MakeVolcano(prefix1, prefix2, baseVal, pairOpt, seedOpt, foldChange)
 	String prefix1, prefix2
-	Variable baseVal, pairOpt, foldChange
+	Variable baseVal, pairOpt, seedOpt, foldChange
 	
 	String wList1 = WaveList(prefix1,";","")
 	String wList2 = WaveList(prefix2,";","")
@@ -137,12 +138,18 @@ Function MakeVolcano(prefix1,prefix2,baseVal,pairOpt, foldChange)
 	wList1 = SortList(wList1)
 	wList2 = SortList(wList2)
 	// Possibly we should use a more sophisticated way to check the groups match?
+	// using this method x_1, x_2, x_3 will run with y_1, y_4, y_5
 	Concatenate/O wList1, allCond1
 	Concatenate/O wList2, allCond2
 	
 	// deal with baseVal
-	TransformImputeBaseVal(allCond1,baseVal)
-	TransformImputeBaseVal(allCond2,baseVal)
+	if(seedOpt == 0)
+		TransformImputeBaseVal(allCond1,baseVal,0)
+		TransformImputeBaseVal(allCond2,baseVal,0)
+	else
+		TransformImputeBaseVal(allCond1,baseVal,0.1)
+		TransformImputeBaseVal(allCond2,baseVal,0.2)
+	endif
 	
 	// now do T-tests
 	Variable nProt = dimsize(allCond1,0)
@@ -191,12 +198,15 @@ Function MakeVolcano(prefix1,prefix2,baseVal,pairOpt, foldChange)
 	colorWave[] = (ratioWave_log2[p] >= foldChange && abs(allTwave[p] > 0.05)) ? 1 : colorWave[p]
 End
 
-STATIC Function TransformImputeBaseVal(m0,baseVal)
+STATIC Function TransformImputeBaseVal(m0,baseVal,seed)
 	WAVE m0
-	Variable baseVal
+	Variable baseVal,seed
 	// values from Perseus - working on each replicate not on whole matrix 
 	Variable width = 0.3
 	Variable downShift = 1.8
+	if(seed != 0)
+		SetRandomSeed seed
+	endif
 	
 	// make a copy of the matrix
 	Duplicate/O/FREE m0,m1
@@ -341,8 +351,8 @@ End
 
 STATIC Function GetReadyForPCA(STRING selectedWavesList,VARIABLE baseVal)
 	Concatenate/O selectedWavesList, forPCA
-	// deal with baseVal
-	TransformImputeBaseVal(forPCA,baseVal)
+	// deal with baseVal - this uses random values even if a seed was used for other analyses
+	TransformImputeBaseVal(forPCA,baseVal,0)
 	DoThePCA()
 End
 
@@ -724,18 +734,20 @@ Function VolcanoIO_Panel()
 	String label2 = volcanoLabelWave[1]
 	Variable baseVal = 0
 	Variable pairOpt = 0
+	Variable seedOpt = 1
 	Variable foldChange = 2
 	
 	DoWindow/K VolcanoSetup
-	NewPanel/N=VolcanoSetup/K=1/W=(81,73,774,200)
-	SetVariable box1,pos={30,13},size={240,14},title="Search string for condition 1 (test):",value=_STR:prefix1
-	SetVariable box2,pos={30,44},size={240,14},title="Search string for condition 2 (ctrl):",value=_STR:prefix2
-	SetVariable box3,pos={276,13},size={200,14},title="Label for condition 1:",value=_STR:label1
-	SetVariable box4,pos={276,44},size={200,14},title="Label for condition 2:",value=_STR:label2
-	SetVariable box5,pos={30,75},size={250,14},title="What value represents absent proteins?",format="%g",value=_NUM:baseVal
-	SetVariable box6,pos={30,94},size={250,14},title="Fold-change (2 is twofold)?",format="%g",value=_NUM:foldChange
-	CheckBox box7,pos={308,92},size={20,20},title="Analyse paired data?",value=pairOpt,mode=0
-	Button DoIt,pos={564,100},size={100,20},proc=ButtonProc,title="Do It"
+	NewPanel/N=VolcanoSetup/K=1/W=(81,73,724,200)
+	SetVariable box1,pos={20,13},size={240,16},title="Search string for condition 1 (test):",value=_STR:prefix1
+	SetVariable box2,pos={20,44},size={240,16},title="Search string for condition 2 (ctrl):",value=_STR:prefix2
+	SetVariable box3,pos={308,13},size={200,16},title="Label for condition 1:",value=_STR:label1
+	SetVariable box4,pos={308,44},size={200,16},title="Label for condition 2:",value=_STR:label2
+	SetVariable box5,pos={20,75},size={250,16},title="What value represents absent proteins?",format="%g",value=_NUM:baseVal
+	SetVariable box6,pos={20,94},size={250,16},title="Fold-change (2 is twofold)?",format="%g",value=_NUM:foldChange
+	CheckBox box7,pos={308,72},size={20,20},title="Analyse paired data?",value=pairOpt,mode=0
+	CheckBox box8,pos={308,92},size={20,20},title="Reproducibly random?",value=seedOpt,mode=0
+	Button DoIt,pos={524,100},size={100,20},proc=ButtonProc,title="Do It"
 End
  
 Function ButtonProc(ba) 
@@ -757,10 +769,15 @@ Function ButtonProc(ba)
 	Variable foldChange = V_Value
 	ControlInfo/W=$ba.win box7
 	Variable pairOpt = V_Value
+	ControlInfo/W=$ba.win box8
+	Variable seedOpt = V_Value
 	Print "Test group:", prefix1, "Labelled", label1, "\rControl group:", prefix2, "Labelled", label2
 	Print "Value for imputation:", baseVal, "\rFold-change:", foldChange
 	if(pairOpt == 1)
 		Print "Using paired data."
+	endif
+	if(seedOpt == 1)
+		Print "Using RNG seeds: 0.1 for", label1, "0.2 for", label2
 	endif
 	WAVE/Z/T 	volcanoPrefixWave, volcanoLabelWave
 	volcanoPrefixWave[0] = prefix1
@@ -768,7 +785,7 @@ Function ButtonProc(ba)
 	volcanoLabelWave[0] = label1
 	volcanoLabelWave[1] = label2
 	Variable logFC = log(abs(foldChange)) / log(2)
-	VolcanoWorkflowWrapper(prefix1,prefix2,baseVal,pairOpt,logFC)
+	VolcanoWorkflowWrapper(prefix1,prefix2,baseVal,pairOpt,seedOpt,logFC)
 End
 
 Function GOTerm_Panel()
