@@ -33,8 +33,8 @@ Function LoadMaxQuantData()
 	endif
 End
 
-Function VolcanoWorkflowWrapper(STRING prefix1,STRING prefix2,VARIABLE baseVal,VARIABLE pairOpt,VARIABLE seedOpt,VARIABLE foldChange)
-	MakeVolcano(prefix1,prefix2,baseVal,pairOpt,seedOpt,foldChange)
+Function VolcanoWorkflowWrapper()
+	MakeVolcano()
 	MakeColorTableWave()
 	MakeVPlot()
 	TableInterestingValues()
@@ -116,15 +116,18 @@ Function LoadMaxQuantFile()
 End
 
 // This function drives the whole program
-/// @param	prefix1	string prefix that will select all waves of condition1
-/// @param	prefix2	string prefix that will select all waves of condition1
-/// @param	baseVal	proteins that are absent have this value
-/// @param  pairOpt	1 is paired, 0 is not
-/// @param  seedOpt	1 is paired, 0 is not
-/// @param  foldChange	log2 value for threshold i.e. 1 is 2-fold change
-Function MakeVolcano(prefix1, prefix2, baseVal, pairOpt, seedOpt, foldChange)
-	String prefix1, prefix2
-	Variable baseVal, pairOpt, seedOpt, foldChange
+// Params are stored in two waves in root volcanoPrefixWave and volcanoParamWave
+Function MakeVolcano()
+	WAVE/Z volcanoParamWave
+	WAVE/Z/T volcanoPrefixWave
+	String prefix1 = volcanoPrefixWave[0] // string prefix that will select all waves of condition 1
+	String prefix2 = volcanoPrefixWave[1] // string prefix that will select all waves of condition 2
+	Variable baseVal = volcanoParamWave[0] // proteins that are absent have this value
+	Variable pairOpt = volcanoParamWave[1] // 1 is paired, 0 is not
+	Variable seedOpt = volcanoParamWave[2] // 1 is use seed, 0 is not (truly random)
+	Variable foldChange = log(abs(volcanoParamWave[3])) / log(2) // log2 value for threshold i.e. 1 is 2-fold change
+	Variable seed1 = volcanoParamWave[4] // 1-1000 value for seed
+	Variable seed2 = volcanoParamWave[5] // 1-1000 value for seed
 	
 	String wList1 = WaveList(prefix1,";","")
 	String wList2 = WaveList(prefix2,";","")
@@ -139,17 +142,12 @@ Function MakeVolcano(prefix1, prefix2, baseVal, pairOpt, seedOpt, foldChange)
 	wList2 = SortList(wList2)
 	// Possibly we should use a more sophisticated way to check the groups match?
 	// using this method x_1, x_2, x_3 will run with y_1, y_4, y_5
-	Concatenate/O wList1, allCond1
-	Concatenate/O wList2, allCond2
+	Concatenate/O/NP=1 wList1, allCond1
+	Concatenate/O/NP=1 wList2, allCond2
 	
 	// deal with baseVal
-	if(seedOpt == 0)
-		TransformImputeBaseVal(allCond1,baseVal,0)
-		TransformImputeBaseVal(allCond2,baseVal,0)
-	else
-		TransformImputeBaseVal(allCond1,baseVal,0.1)
-		TransformImputeBaseVal(allCond2,baseVal,0.2)
-	endif
+	TransformImputeBaseVal(allCond1)
+	TransformImputeBaseVal(allCond2)
 	
 	// now do T-tests
 	Variable nProt = dimsize(allCond1,0)
@@ -169,9 +167,9 @@ Function MakeVolcano(prefix1, prefix2, baseVal, pairOpt, seedOpt, foldChange)
 		WAVE/Z W_StatsTTest
 		if(V_flag == 0)
 			if(pairOpt == 0)
-				pVar = W_StatsTTest[9] // p-value
+				pVar = W_StatsTTest[%P] // p-value
 			else
-				pVar = W_StatsTTest[6] // p-value for Paired
+				pVar = W_StatsTTest[%P] // p-value for Paired
 			endif
 		else
 			pVar = 1
@@ -198,13 +196,19 @@ Function MakeVolcano(prefix1, prefix2, baseVal, pairOpt, seedOpt, foldChange)
 	colorWave[] = (ratioWave_log2[p] >= foldChange && abs(allTwave[p] > 0.05)) ? 1 : colorWave[p]
 End
 
-STATIC Function TransformImputeBaseVal(m0,baseVal,seed)
+/// @param m0 2D wave containing data to be imputed
+STATIC Function TransformImputeBaseVal(m0)
 	WAVE m0
-	Variable baseVal,seed
+	WAVE/Z volcanoParamWave
+	// work out which wave we are doing condition 1 or condition 2
+	String wName = NameOfWave(m0)
+	Variable nn = str2num(wName[strlen(wName) - 1])
+	Variable baseVal = volcanoParamWave[0] 
+	Variable seed = volcanoParamWave[3 + nn] / 1000 // will be row 4 for condition 1 and 5 for 2
 	// values from Perseus - working on each replicate not on whole matrix 
 	Variable width = 0.3
 	Variable downShift = 1.8
-	if(seed != 0)
+	if(volcanoParamWave[2] != 0)
 		SetRandomSeed seed
 	endif
 	
@@ -352,7 +356,7 @@ End
 STATIC Function GetReadyForPCA(STRING selectedWavesList,VARIABLE baseVal)
 	Concatenate/O selectedWavesList, forPCA
 	// deal with baseVal - this uses random values even if a seed was used for other analyses
-	TransformImputeBaseVal(forPCA,baseVal,0)
+	TransformImputeBaseVal(forPCA)
 	DoThePCA()
 End
 
@@ -723,31 +727,42 @@ End
 
 Function VolcanoIO_Panel()
 	WAVE/Z/T volcanoPrefixWave, volcanoLabelWave
+	WAVE/Z volcanoParamWave
 	if(!WaveExists(volcanoPrefixWave))
-		MAKE/O/N=(2)/T volcanoPrefixWave = {"prefix1*","prefix2*"}
-		MAKE/O/N=(2)/T volcanoLabelWave = {"Test","Control"}
+		Make/O/N=(2)/T volcanoPrefixWave = {"prefix1*","prefix2*"}
+		Make/O/N=(2)/T volcanoLabelWave = {"Test","Control"}
+		Make/O/N=(6) volcanoParamWave = {0,0,1,2,1,2}
 	endif
 	// they are called prefix but suffix (or any wildcard search string is fine)
 	String prefix1 = volcanoPrefixWave[0]
 	String prefix2 = volcanoPrefixWave[1]
 	String label1 = volcanoLabelWave[0]
 	String label2 = volcanoLabelWave[1]
-	Variable baseVal = 0
-	Variable pairOpt = 0
-	Variable seedOpt = 1
-	Variable foldChange = 2
+	// pick up parameters
+	Variable baseVal = volcanoParamWave[0]
+	Variable pairOpt = volcanoParamWave[1]
+	Variable seedOpt = volcanoParamWave[2]
+	Variable foldChange = volcanoParamWave[3]
+	Variable seed1 = volcanoParamWave[4]
+	Variable seed2 = volcanoParamWave[5]
 	
 	DoWindow/K VolcanoSetup
-	NewPanel/N=VolcanoSetup/K=1/W=(81,73,724,200)
-	SetVariable box1,pos={20,13},size={240,16},title="Search string for condition 1 (test):",value=_STR:prefix1
-	SetVariable box2,pos={20,44},size={240,16},title="Search string for condition 2 (ctrl):",value=_STR:prefix2
-	SetVariable box3,pos={308,13},size={200,16},title="Label for condition 1:",value=_STR:label1
-	SetVariable box4,pos={308,44},size={200,16},title="Label for condition 2:",value=_STR:label2
-	SetVariable box5,pos={20,75},size={250,16},title="What value represents absent proteins?",format="%g",value=_NUM:baseVal
-	SetVariable box6,pos={20,94},size={250,16},title="Fold-change (2 is twofold)?",format="%g",value=_NUM:foldChange
-	CheckBox box7,pos={308,72},size={20,20},title="Analyse paired data?",value=pairOpt,mode=0
-	CheckBox box8,pos={308,92},size={20,20},title="Reproducibly random?",value=seedOpt,mode=0
-	Button DoIt,pos={524,100},size={100,20},proc=ButtonProc,title="Do It"
+	NewPanel/N=VolcanoSetup/K=1/W=(81,73,774,240)
+	TitleBox tb0,pos={20,13},size={115,20},title="Search string:",fstyle=1,fsize=11,labelBack=(55000,55000,65000),frame=0
+	SetVariable box1,pos={20,33},size={240,16},title="Search string for condition 1 (test):",value=_STR:prefix1
+	SetVariable box2,pos={20,54},size={240,16},title="Search string for condition 2 (ctrl):",value=_STR:prefix2
+	TitleBox tb1,pos={298,13},size={115,20},title="Labels:",fstyle=1,fsize=11,labelBack=(55000,55000,65000),frame=0
+	SetVariable box3,pos={298,33},size={200,16},title="Label for condition 1:",value=_STR:label1
+	SetVariable box4,pos={298,54},size={200,16},title="Label for condition 2:",value=_STR:label2
+	SetVariable box5,pos={20,115},size={250,16},title="What value represents absent proteins?",format="%g",value=_NUM:baseVal
+	SetVariable box6,pos={20,134},size={250,16},title="Fold-change (2 is twofold)?",format="%g",value=_NUM:foldChange
+	CheckBox box7,pos={298,131},size={20,20},title="Analyse paired data?",value=pairOpt,mode=0
+	CheckBox box8,pos={528,92},size={20,20},title="Reproducibly random?",value=seedOpt,mode=0
+	TitleBox tb2,pos={528,13},size={115,20},title="Imputation:",fstyle=1,fsize=11,labelBack=(55000,55000,65000),frame=0
+	SetVariable box9,pos={528,33},size={150,16},title="Seed for condition 1:",format="%g",value=_NUM:seed1
+	SetVariable box10,pos={528,54},size={150,16},title="Seed for condition 2:",format="%g",value=_NUM:seed2
+	TitleBox tb3,pos={528,72},size={115,20},title="Pick a value between 1 and 1000",fstyle=0,fsize=9,frame=0
+	Button DoIt,pos={564,140},size={100,20},proc=ButtonProc,title="Do It"
 End
  
 Function ButtonProc(ba) 
@@ -771,21 +786,32 @@ Function ButtonProc(ba)
 	Variable pairOpt = V_Value
 	ControlInfo/W=$ba.win box8
 	Variable seedOpt = V_Value
+	ControlInfo/W=$ba.win box9
+	Variable seed1 = V_Value
+	ControlInfo/W=$ba.win box10
+	Variable seed2 = V_Value
+	
 	Print "Test group:", prefix1, "Labelled", label1, "\rControl group:", prefix2, "Labelled", label2
 	Print "Value for imputation:", baseVal, "\rFold-change:", foldChange
 	if(pairOpt == 1)
 		Print "Using paired data."
 	endif
 	if(seedOpt == 1)
-		Print "Using RNG seeds: 0.1 for", label1, "0.2 for", label2
+		Print "Using RNG seeds:", label1, "=", seed1, "&", label2, "=", seed2
 	endif
 	WAVE/Z/T 	volcanoPrefixWave, volcanoLabelWave
 	volcanoPrefixWave[0] = prefix1
 	volcanoPrefixWave[1] = prefix2
 	volcanoLabelWave[0] = label1
 	volcanoLabelWave[1] = label2
-	Variable logFC = log(abs(foldChange)) / log(2)
-	VolcanoWorkflowWrapper(prefix1,prefix2,baseVal,pairOpt,seedOpt,logFC)
+	WAVE/Z volcanoParamWave
+	volcanoParamWave[0] = baseVal
+	volcanoParamWave[1] = pairOpt
+	volcanoParamWave[2] = seedOpt
+	volcanoParamWave[3] = foldChange
+	volcanoParamWave[4] = seed1
+	volcanoParamWave[5] = seed2
+	VolcanoWorkflowWrapper()
 End
 
 Function GOTerm_Panel()
@@ -866,6 +892,10 @@ Function doPCAButtonProc(ctrlName) : ButtonControl
 	
 	ControlInfo/W=PCASelector box3
 	Variable baseVal = V_Value
+	WAVE/Z volcanoParamWave
+	volcanoParamWave[0] = baseVal
+	// set param for imputation to random
+	volcanoParamWave[2] = 0
 	String selectedWavesList = WS_SelectedObjectsList("PCASelector","ExampleWaveSelectorList")
 	GetReadyForPCA(selectedWavesList,baseVal)
 End
