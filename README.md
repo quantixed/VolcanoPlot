@@ -77,6 +77,8 @@ It is possible to do pairwise comparisons for the volcano plot by clicking the c
 
 The default is to look at a 2-fold change, but this can be changed in the dialog box.
 
-A PCA is generated for the selected data. If you want to compare some other data using PCA use the menu item. This is useful if you have more than two conditions and want to do a PCA on everything.
+A PCA is generated for the selected data.
+This works by comparing intensities of each detected protein per replicate, in the datasets.
+The PCA is designed to be equivalent to SIMCA-P+.
 
-Note that on loading of MaxQuant data, any rows that have no information for Gene Name or Protein Name (i.e. contaminants) are filtered out during the load prcedure.
+Note that on loading of MaxQuant data, any rows that have no information for Gene Name or Protein Name (i.e. contaminants) are filtered out during the load procedure.

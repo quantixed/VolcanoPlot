@@ -16,7 +16,7 @@ Menu "Macros"
 			"Load and Match UniProt Data...", /Q, UniprotWrapper()
 			"Filter for GO Term(s)", /Q, GOTerm_Panel()
 		end
-		"PCA Only...", /Q, MakePCAWaveSelectorPanel()
+//		"PCA Only...", /Q, MakePCAWaveSelectorPanel() // remove this option
 		"Label Top 10", /Q, LabelTopTenWorkflow()
 		"Count Comparison", /Q, MakeTheComparison()
 		"Save Layout", /Q, SaveTheLayout()
@@ -348,8 +348,21 @@ End
 
 STATIC Function FromVolcanoToPCA()
 	WAVE/Z allCond1, allCond2
-	// we will use imputed values
-	Concatenate/O/NP=1 {allCond1,allCond2}, forPCA
+	WAVE/Z forPCA
+	KillWaves/Z forPCA
+	// we will use imputed values and we will take the ratio per replicate
+	// note that Volcano plot ratio is the mean of cond1 / mean of cond2
+	// here we take the ratio of replicates and use the replicates for PCA, so...
+	if(DimSize(allCond1,1) != DimSize(allCond2,1))
+		Print "Number of replicates between conditions differs. PCA is of all data, not ratios."
+		Concatenate/O/NP=1 {allCond1,allCond2}, forPCA
+	elseif(DimSize(allCond1,1) == 1)
+		Print "Single replicate dataset. No PCA."
+		Concatenate/O/NP=1 {allCond1,allCond2}, forPCA
+		return 0
+	else
+		MatrixOp/O forPCA = allCond1 / allCond2
+	endif
 	DoThePCA()
 End
 
@@ -379,25 +392,33 @@ Function DoThePCA()
 		MakeColorTableWave()
 		WAVE/Z colorTableWave
 	endif
-	// pre-process matrix, centre on 0, sd of 1
-	// we're interested in Rows (proteins) not Cols (expts)
+	// pre-process data
+	// Previously we did
+//	MatrixOp/O forPCA = SubtractMean(forPCA,2)
+//	MatrixOp/O forPCA = NormalizeRows(forPCA)
+	// now we do:
+	// log2 transform
+	MatrixOp/O forPCA = log2(forPCA)
+	// in case we have NaN or Inf
+	forPCA[][] = (numtype(forPCA[p][q]) == 2 || numtype(forPCA[p][q]) == 1) ? 0 : forPCA[p][q]
+	// centre the data
 	MatrixOp/O forPCA = SubtractMean(forPCA,2)
-	MatrixOp/O forPCA = NormalizeRows(forPCA)
-	// abfter subtraction we can get 0 across the row, gives NaN after norm so
-	forPCA[][] = (numtype(forPCA[p][q]) == 2) ? 0 : forPCA[p][q]
 	// do the PCA, SRMT flag is needed to get M_R
 	PCA/ALL/SRMT forPCA
 	WAVE/Z M_R
+	// M_R is inverse compared to the output from SIMCA-P+
+	M_R *= -1
 	// make a version of colorwave to display interesting proteins
-	WAVE/Z allTWave
 	Duplicate/O colorWave, colorPCAWave
-	colorPCAWave[] = (abs(allTwave[p] > 0.05)) ? NaN : colorWave[p]
 	// display PC1 and PC2
 	Display/N=pcaPlot/W=(36,757,431,965) M_R[][1] vs M_R[][0]
-	SetAxis/W=pcaPlot left -1,1
-	SetAxis/W=pcaPlot bottom -1,1
-	ModifyGraph/W=pcaPlot mode=3,marker=19,msize=2,mrkThick=0
+	// find min and max for PC1 and PC2 combined
+	WaveStats/Q/RMD=[][0,1] forPCA
+	SetAxis/W=pcaPlot left V_min,V_max
+	SetAxis/W=pcaPlot bottom V_min,V_max
+	ModifyGraph/W=pcaPlot mode=3,marker=19,mrkThick=0
 	ModifyGraph/W=pcaPlot zColor(M_R)={colorPCAWave,0,3,ctableRGB,0,colorTableWave}
+	ModifyGraph/W=pcaPlot zmrkSize(M_R)={colorPCAWave,0,1,1,2}
 	ModifyGraph/W=pcaPlot zero=4,mirror=1
 	Label/W=pcaPlot left "PC2"
 	Label/W=pcaPlot bottom "PC1"
