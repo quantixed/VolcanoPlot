@@ -16,6 +16,10 @@ Tell Igor which two conditions you want to compare (give Igor a wildcard searchs
 
 Also tell Igor what the basevalue is. This is the intensity assigned to any proteins which were not detected. Default is 0 (for MaxQuant).
 
+If you have several `proteinGroups.txt` files, it is possible to analyse them together using the *Load Multiple MaxQuant...* option.
+Due to potential differences in LFQ values between files, the default is to display the mean of ratios rather than the ratio of means.
+Paired T-test is the default test, otherwise this option will give equivalent outputs as for a single file.
+
 ## Manual analysis
 
 Analysis can also be started manually from the Macros menu.
@@ -33,7 +37,9 @@ Igor will make a Volcano Plot of the comparison. Proteins are coloured according
 
 Transforms and imputation are done exactly as described for the default settings in Perseus.
 
-## Subcellular analysis
+## Secondary analysis
+
+### Subcellular analysis
 
 Once the data has been processed, you can do further (subcellular) analysis. For example, you may want to only view the hits that are associated with a certain GO Term or group of GO Terms. This is possible but involves some manual steps.
 
