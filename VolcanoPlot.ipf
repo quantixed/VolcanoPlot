@@ -11,16 +11,17 @@ Menu "Macros"
 	SubMenu "Proteomics"
 		"Load MaxQuant Data...", /Q, LoadMaxQuantData()
 		"Load Multiple MaxQuant...", /Q, LoadMultiMaxQuantData()
-		"Volcano Plot...", /Q, VolcanoIO_Panel()
+		SubMenu "Tools"
+			"Volcano Plot...", /Q, VolcanoIO_Panel()
+//			"PCA Only...", /Q, MakePCAWaveSelectorPanel() // hide this option
+			"Label Top 10", /Q, LabelTopTenWorkflow()
+			"Save Layout", /Q, SaveTheLayout()
+		end
 		SubMenu "Subcellular analysis"
 			"Make List to Retrieve Uniprot Data", /Q, UniprotTable()
 			"Load and Match UniProt Data...", /Q, UniprotWrapper()
 			"Filter for GO Term(s)", /Q, GOTerm_Panel()
 		end
-//		"PCA Only...", /Q, MakePCAWaveSelectorPanel() // remove this option
-		"Label Top 10", /Q, LabelTopTenWorkflow()
-		"Count Comparison", /Q, MakeTheComparison()
-		"Save Layout", /Q, SaveTheLayout()
 	end
 End
 
@@ -44,8 +45,14 @@ Function LoadMultiMaxQuantData()
 	endif
 End
 
-// this is the original workflow to make a Volcano Plot and associated plots
-Function VolcanoWorkflowWrapper()
+// this is the workflow to make a Volcano Plot and associated plots
+Function VolcanoWorkflowWrapper(VARIABLE opt)
+	if(opt == 0)
+		PrepareForVolcano()
+	else
+		ConsolidateData()
+		MergeTheData()
+	endif
 	MakeVolcano()
 	MakeColorTableWave()
 	MakeVPlot()
@@ -54,7 +61,6 @@ Function VolcanoWorkflowWrapper()
 	MakeMeanComparison()
 	FromVolcanoToPCA()
 	MakeTheLayout()
-//	SaveTheLayout()
 End
 
 // this wrapper allows the user to select proteins for display using GO terms
@@ -82,19 +88,6 @@ Function LabelTopTenWorkflow()
 	LabelTopXProts(10)
 End
 
-Function MultiVolcanoWrapper()
-	ConsolidateData()
-	MergeTheData()
-	MakeMultiVolcano()
-	MakeColorTableWave()
-	MakeVPlot()
-	TableInterestingValues()
-	AddSignificantHitsToVolcano(0)
-	MakeMeanComparison()
-	FromVolcanoToPCA()
-	MakeTheLayout()
-//	SaveTheLayout()
-End
 
 ////////////////////////////////////////////////////////////////////////
 // Main functions
@@ -144,18 +137,18 @@ End
 
 Function LoadMaxQuantFiles()
 	// find folder containing the subfolders
-	NewPath/O/Q/M="Please find disk folder" expDiskFolder
+	NewPath/O/Q/M="Please find disk folder" diskFolder
 	if (V_flag != 0)
 		DoAlert 0, "Disk folder error"
 		return -1
 	endif
-	PathInfo expDiskFolder
+	PathInfo diskFolder
 	String diskFolderPath0 = S_Path
 	
 	// set up data folder and get ready to load
 	NewDataFolder/O/S root:data
 	// exp in this case means a unique proteomics experiment
-	String expDirList = IndexedDir(expDiskFolder,-1,0)
+	String expDirList = IndexedDir(diskFolder,-1,0)
 	Variable nExp = ItemsInList(expDirList)
 	Make/O/N=(nExp)/T nameWave0
 	String dfName0, diskFolderPath1, dataFolderPath
@@ -227,9 +220,8 @@ STATIC Function GenerateConditionGroupWaves(STRING condList, VARIABLE ii)
 	Duplicate/O/T uCond $("root:data:condMstr_" + num2str(ii))
 End
 
-// This function drives the whole program
-// Params are stored in two waves in root volcanoPrefixWave and volcanoParamWave
-Function MakeVolcano()
+
+Function PrepareForVolcano()
 	WAVE/Z volcanoParamWave
 	WAVE/Z/T volcanoPrefixWave
 	String prefix1 = volcanoPrefixWave[0] // string prefix that will select all waves of condition 1
@@ -261,17 +253,30 @@ Function MakeVolcano()
 	// deal with baseVal
 	TransformImputeBaseVal(allCond1)
 	TransformImputeBaseVal(allCond2)
+End
+
+// This function drives the whole program
+Function MakeVolcano()
+	WAVE/Z volcanoParamWave, allCond1, allCond2
 	
-	// now do T-tests
-	Variable nProt = dimsize(allCond1,0)
-	Make/O/N=(nProt) allTWave,colorWave=0
+	Variable pairOpt = volcanoParamWave[1] // 1 is paired, 0 is not
+	Variable foldChange = log(abs(volcanoParamWave[3])) / log(2) // log2 value for threshold i.e. 1 is 2-fold change
+	Variable meanOpt = volcanoParamWave[6] // 1 is ratios v ratios, 0 is mean v mean
+	
+	// at this point we have the consolidated merged data it is log transformed (following imputation)
 	Variable pVar
+	Variable nProt = DimSize(allCond1,0)
+	Make/O/N=(nProt) allTWave, colorWave=0
 	
 	Variable i
 	
+	// do T-tests
 	for(i = 0; i < nProt; i += 1)
+		// we extract the row per protein. NaNs are present from missing values and must be removed
 		MatrixOp/O/FREE w0 = row(allCond1,i) ^ t
+		WaveTransform zapnans w0
 		MatrixOp/O/FREE w1 = row(allCond2,i) ^ t
+		WaveTransform zapnans w1
 		if(pairOpt == 0)
 			StatsTTest/Q/Z w0,w1
 		else
@@ -279,11 +284,7 @@ Function MakeVolcano()
 		endif
 		WAVE/Z W_StatsTTest
 		if(V_flag == 0)
-			if(pairOpt == 0)
-				pVar = W_StatsTTest[%P] // p-value
-			else
-				pVar = W_StatsTTest[%P] // p-value for Paired
-			endif
+			pVar = W_StatsTTest[%P] // p-value
 		else
 			pVar = 1
 		endif
@@ -293,14 +294,34 @@ Function MakeVolcano()
 	// make mean waves - these need transformation back
 	allCond1[][] = 10^(allCond1[p][q])
 	allCond2[][] = 10^(allCond2[p][q])
-	MatrixOp/O meanCond1 = sumrows(allCond1)
-	meanCond1 /=ItemsInList(wList1)
-	MatrixOp/O meanCond2 = sumrows(allCond2)
-	meanCond2 /=ItemsInList(wList2)
 	
-	// ratio wave
-	MatrixOp/O ratioWave = meanCond1 / meanCond2
+	if(meanOpt == 1 && DimSize(allCond1,1) != DimSize(allCond2,1))
+		Print "Unequal replicates in test and control. Ratios v Ratios not possible."
+		meanOpt = 0
+	endif
 	
+	// because of potential NaNs we need a few extra steps
+	Duplicate/O/FREE allCond1, sumMat
+	sumMat[][] = (numtype(allCond1) == 2) ? 0 : 1 
+	MatrixOp/O meanCond1 = sumrows(replaceNaNs(allCond1,0)) / sumrows(sumMat)
+	Duplicate/O/FREE allCond2, sumMat
+	sumMat[][] = (numtype(allCond2) == 2) ? 0 : 1 
+	MatrixOp/O meanCond2 = sumrows(replaceNaNs(allCond2,0)) / sumrows(sumMat)
+	
+	// if we are doing mean vs mean
+	if(meanOpt == 0)
+		// ratio wave
+		MatrixOp/O ratioWave = meanCond1 / meanCond2
+	else
+		// otherwise we will compare ratio vs ratio
+		MatrixOp/O/FREE ratioMat = allCond1 / allCond2
+		Duplicate/O/FREE ratioMat, sumMat
+		sumMat[][] = (numtype(ratioMat) == 2) ? 0 : 1 
+		// ratio wave
+		MatrixOp/O ratioWave = sumrows(replaceNaNs(ratioMat,0)) / sumrows(sumMat)
+		// note that I tried an alternative way to calc meanCond1/2 and it was no better
+	endif
+	// ratios need converting to Log2 for volcanoPlot
 	Duplicate/O ratioWave,ratioWave_log2
 	ratioWave_log2[] = log(abs(ratioWave[p])) / log(2)
 	// assign colors
@@ -415,7 +436,7 @@ Function AddSignificantHitsToVolcano(vpOpt)
 		plotName = "ftVolcanoPlot"
 	endif
 	
-	String labelStr = "\Z09"
+	String labelStr = "\Z08"
 	
 	Variable nRows = numpnts(colorW)
 	Variable i
@@ -483,6 +504,8 @@ STATIC Function FromVolcanoToPCA()
 	DoThePCA(0)
 End
 
+// this function is a way to assemble a matrix from a wavelist (of 1D data waves) to push towards PCA
+// if using MaxQuant files, this option should not be needed
 STATIC Function GetReadyForPCA(STRING selectedWavesList,VARIABLE baseVal)
 	Concatenate/O selectedWavesList, forPCA
 	// deal with baseVal - this uses random values even if a seed was used for other analyses
@@ -490,6 +513,8 @@ STATIC Function GetReadyForPCA(STRING selectedWavesList,VARIABLE baseVal)
 	DoThePCA(1)
 End
 
+// This function will do the PCA
+// Missing values (from a merge of different expts) can be dealt with in two ways using opt
 Function DoThePCA(opt)
 	Variable opt // 1 means substitute 0 for missing values, 0 means delete whole row.
 	
@@ -558,6 +583,7 @@ Function DoThePCA(opt)
 	SetWindow pcaPlot, hook(modified)=thunk_hook
 End
 
+// add labels to volcano plot to indicate the top x proteins
 Function LabelTopXProts(numProteins)
 	Variable numProteins
 	if(strlen(WinList("volcanoPlot",";","WIN:1")) < 1)
@@ -576,53 +602,31 @@ Function LabelTopXProts(numProteins)
 	endfor
 End
 
-Function MakeTheComparison()
-	WAVE/Z/T volcanoPrefixWave, volcanoLabelWave
-	WAVE/Z colorWave, colorTableWave
-	Duplicate/O colorWave, highlightWave
-	// use original values (no imputation)
-	Concatenate/O/NP=1 WaveList(volcanoPrefixWave[0],";",""), countCond1
-	Concatenate/O/NP=1 WaveList(volcanoPrefixWave[1],";",""), countCond2
-	Variable nCol1 = DimSize(countCond1,1)
-	Variable nCol2 = DimSize(countCond2,1)
-	MatrixOp/O countCond1 = sumRows(countCond1) / nCol1
-	MatrixOp/O countCond2 = sumRows(countCond2) / nCol2
-	Variable maxVal = max(WaveMax(countCond1),WaveMax(countCond2))
-	KillWindow/Z compPlot
-	Display/N=compPlot/W=(436,757,700,965) countCond1 vs countCond2
-	SetAxis/W=compPlot left 0,maxVal
-	SetAxis/W=compPlot bottom 0,maxVal
-	ModifyGraph/W=compPlot mode=3,marker=19,msize=2,mrkThick=0
-	Label/W=compPlot left VolcanoLabelWave[0]
-	Label/W=compPlot bottom VolcanoLabelWave[1]
-	ModifyGraph/W=compPlot width={Aspect,1}
-	ModifyGraph/W=compPlot zColor(countCond1)={highlightWave,0,3,ctableRGB,0,colorTableWave}
-	SetWindow compPlot, hook(modified)=thunk_hook
-End
-
-// use a semi-colon separated list of protein names to highlight
-Function HighlightTheseProteins(myList)
-	String myList
-	
-	WAVE/Z highlightWave
-	if(!WaveExists(highlightWave))
-		WAVE/Z colorWave
-		Duplicate/O colorWave, highlightWave
-	endif
-	
-	WAVE/Z/T SHORTNAME
-	Variable nProteins = ItemsInList(myList)
-	highlightWave = 0
-	String proteinName
-	
-	Variable i
-	
-	for(i = 0; i < nProteins; i += 1)
-		proteinName = StringFromList(i, myList)
-		FindValue/TEXT=proteinName/TXOP=2 SHORTNAME
-		highlightWave[V_Value] = 3
-	endfor
-End
+// disabling this function because the count comparison function has been deleted
+// could be used to highlight proteins on another plot??
+//// use a semi-colon separated list of protein names to highlight
+//Function HighlightTheseProteins(myList)
+//	String myList
+//	
+//	WAVE/Z highlightWave
+//	if(!WaveExists(highlightWave))
+//		WAVE/Z colorWave
+//		Duplicate/O colorWave, highlightWave
+//	endif
+//	
+//	WAVE/Z/T SHORTNAME
+//	Variable nProteins = ItemsInList(myList)
+//	highlightWave = 0
+//	String proteinName
+//	
+//	Variable i
+//	
+//	for(i = 0; i < nProteins; i += 1)
+//		proteinName = StringFromList(i, myList)
+//		FindValue/TEXT=proteinName/TXOP=2 SHORTNAME
+//		highlightWave[V_Value] = 3
+//	endfor
+//End
 
 STATIC Function MakeTheLayout()
 	KillWindow/Z summaryLayout
@@ -665,6 +669,9 @@ Function LoadUniprot()
 	SetDataFolder root:
 	return 0
 End
+
+
+////-- Below here are functions that label existing volcano plot outputs according to GO Terms
 
 Function UniprotTable()
 	WAVE/Z/T SHORTNAME
@@ -874,6 +881,9 @@ Function AddGOTermsToVolcano()
 	TextBox/W=$plotName/C/N=GOTs/B=1/F=0/A=LT/X=15.00/Y=0.00 labelStr
 End
 
+
+////-- Below here are functions that process multiple datasets for Volcano Plotting
+
 Function ConsolidateData()
 	// for each exp go through the LFQ values and consolidate identical rows by summing
 	// rename and of the strings passed in prefixwave before doing this.
@@ -912,6 +922,8 @@ Function ConsolidateData()
 	endfor
 End
 
+// this function will merge and align the data from multiple datasets so that the rows
+// are equivalent
 Function MergeTheData()
 	
 	Wave/Z selWave0 = root:data:selWave0
@@ -984,79 +996,6 @@ Function MergeTheData()
 	Concatenate/O/NP=1/KILL WaveList("shadow_*_2",";",""), allCond2
 End
 
-Function MakeMultiVolcano()
-	WAVE/Z volcanoParamWave, allCond1, allCond2
-	
-	Variable pairOpt = volcanoParamWave[1] // 1 is paired, 0 is not
-	Variable foldChange = log(abs(volcanoParamWave[3])) / log(2) // log2 value for threshold i.e. 1 is 2-fold change
-	Variable meanOpt = volcanoParamWave[6] // 1 is ratios v ratios, 0 is mean v mean
-	
-	// at this point we have the consolidated merged data it is log transformed (following imputation)
-	Variable pVar
-	Variable nProt = DimSize(allCond1,0)
-	Make/O/N=(nProt) allTWave, colorWave=0
-	
-	Variable i
-	
-	// do T-tests
-	for(i = 0; i < nProt; i += 1)
-		// we extract the row per protein. NaNs are present from missing values and must be removed
-		MatrixOp/O/FREE w0 = row(allCond1,i) ^ t
-		WaveTransform zapnans w0
-		MatrixOp/O/FREE w1 = row(allCond2,i) ^ t
-		WaveTransform zapnans w1
-		if(pairOpt == 0)
-			StatsTTest/Q/Z w0,w1
-		else
-			StatsTTest/Q/Z/PAIR w0,w1
-		endif
-		WAVE/Z W_StatsTTest
-		if(V_flag == 0)
-			pVar = W_StatsTTest[%P] // p-value
-		else
-			pVar = 1
-		endif
-		allTWave[i] = pVar
-	endfor
-	
-	// make mean waves - these need transformation back
-	allCond1[][] = 10^(allCond1[p][q])
-	allCond2[][] = 10^(allCond2[p][q])
-	
-	if(meanOpt == 1 && DimSize(allCond1,1) != DimSize(allCond2,1))
-		Print "Unequal replicates in test and control. Ratios v Ratios not possible."
-		meanOpt = 0
-	endif
-	
-	// because of potential NaNs we need a few extra steps
-	Duplicate/O/FREE allCond1, sumMat
-	sumMat[][] = (numtype(allCond1) == 2) ? 0 : 1 
-	MatrixOp/O meanCond1 = sumrows(replaceNaNs(allCond1,0)) / sumrows(sumMat)
-	Duplicate/O/FREE allCond2, sumMat
-	sumMat[][] = (numtype(allCond2) == 2) ? 0 : 1 
-	MatrixOp/O meanCond2 = sumrows(replaceNaNs(allCond2,0)) / sumrows(sumMat)
-	
-	// if we are doing mean vs mean
-	if(meanOpt == 0)
-		// ratio wave
-		MatrixOp/O ratioWave = meanCond1 / meanCond2
-	else
-		// otherwise we will compare ratio vs ratio
-		MatrixOp/O/FREE ratioMat = allCond1 / allCond2
-		Duplicate/O/FREE ratioMat, sumMat
-		sumMat[][] = (numtype(ratioMat) == 2) ? 0 : 1 
-		// ratio wave
-		MatrixOp/O ratioWave = sumrows(replaceNaNs(ratioMat,0)) / sumrows(sumMat)
-		// note that I tried an alternative way to calc meanCond1/2 and it was no better
-	endif
-	// ratios need converting to Log2 for volcanoPlot
-	Duplicate/O ratioWave,ratioWave_log2
-	ratioWave_log2[] = log(abs(ratioWave[p])) / log(2)
-	// assign colors
-	colorWave[] = (ratioWave_log2[p] >= foldChange && abs(allTwave[p] <= 0.05)) ? 3 : colorWave[p]
-	colorWave[] = (ratioWave_log2[p] <= -foldChange && abs(allTwave[p] <= 0.05)) ? 2 : colorWave[p]
-	colorWave[] = (ratioWave_log2[p] >= foldChange && abs(allTwave[p] > 0.05)) ? 1 : colorWave[p]
-End
 
 ////////////////////////////////////////////////////////////////////////
 // Panel functions
@@ -1082,7 +1021,7 @@ Function VolcanoIO_Panel()
 	Variable foldChange = volcanoParamWave[3]
 	Variable seed1 = volcanoParamWave[4]
 	Variable seed2 = volcanoParamWave[5]
-	Variable meanOpt = volcanoParamWave[6] // not used yet
+	Variable meanOpt = volcanoParamWave[6]
 	
 	DoWindow/K VolcanoSetup
 	NewPanel/N=VolcanoSetup/K=1/W=(81,73,774,240)
@@ -1094,7 +1033,8 @@ Function VolcanoIO_Panel()
 	SetVariable box4,pos={298,54},size={200,16},title="Label for condition 2:",value=_STR:label2
 	SetVariable box5,pos={20,115},size={250,16},title="What value represents absent proteins?",format="%g",value=_NUM:baseVal
 	SetVariable box6,pos={20,134},size={250,16},title="Fold-change (2 is twofold)?",format="%g",value=_NUM:foldChange
-	CheckBox box7,pos={298,131},size={20,20},title="Analyse paired data?",value=pairOpt,mode=0
+	CheckBox box11,pos={298,131},size={20,20},title="Ratios v Ratios?",value=meanOpt,mode=0
+	CheckBox box7,pos={298,116},size={20,20},title="Analyse paired data?",value=pairOpt,mode=0
 	CheckBox box8,pos={528,92},size={20,20},title="Reproducibly random?",value=seedOpt,mode=0
 	TitleBox tb2,pos={528,13},size={115,20},title="Imputation:",fstyle=1,fsize=11,labelBack=(55000,55000,65000),frame=0
 	SetVariable box9,pos={528,33},size={150,16},title="Seed for condition 1:",format="%g",value=_NUM:seed1
@@ -1128,6 +1068,8 @@ Function ButtonProc(ba)
 	Variable seed1 = V_Value
 	ControlInfo/W=$ba.win box10
 	Variable seed2 = V_Value
+	ControlInfo/W=$ba.win box11
+	Variable meanOpt = V_Value
 	
 	Print "Test group:", prefix1, "Labelled", label1, "\rControl group:", prefix2, "Labelled", label2
 	Print "Value for imputation:", baseVal, "\rFold-change:", foldChange
@@ -1149,7 +1091,10 @@ Function ButtonProc(ba)
 	volcanoParamWave[3] = foldChange
 	volcanoParamWave[4] = seed1
 	volcanoParamWave[5] = seed2
-	VolcanoWorkflowWrapper()
+	volcanoParamWave[6] = meanOpt
+	
+	KillWindow/Z $(ba.win)
+	VolcanoWorkflowWrapper(0)
 End
 
 Function GOTerm_Panel()
@@ -1443,8 +1388,18 @@ Function DoItMultiButtonProc(ba) : ButtonControl
 			ControlInfo/W=$ba.win box11
 			Variable meanOpt = V_Value
 		
-			Print "Test group:", label1, "\rControl group:", label2
+			Print "Test group:", label1
+			Print "Control group:", label2
+			Variable counter = 0
+			Print "Groups selected:"
+			do
+				Print vTCW[counter][0], "vs", vTCW[counter][1]
+				counter += 1
+			while (counter < DimSize(vTCW,0))
 			Print "Value for imputation:", baseVal, "\rFold-change:", foldChange
+			if(meanOpt == 1)
+				Print "Volcano plot shows ratios v ratios not mean v mean"
+			endif
 			if(pairOpt == 1)
 				Print "Using paired data."
 			endif
@@ -1465,7 +1420,8 @@ Function DoItMultiButtonProc(ba) : ButtonControl
 			volcanoParamWave[5] = seed2
 			volcanoParamWave[6] = meanOpt
 			KillWindow/Z $(ba.win)
-			MultiVolcanoWrapper()
+			
+			VolcanoWorkflowWrapper(1)
 			break
 		case -1: // control being killed
 			break
@@ -1579,11 +1535,17 @@ STATIC Function RenameShortname(tw,str)
 	endfor
 End
 
+// the purpose of this function is to consolidate entries into one entry
+// For example, three rows called MYOF, will become 1
+// if there are no multiples, there is no action
 STATIC Function ConsolidateLFQs(tw0,tw1,m0,m1)
 	WAVE/T tw0,tw1
 	WAVE m0,m1
 	// get list of proteins with multiple entries
 	FindDuplicates/DT=tempW tw0
+	if(numpnts(tempW) == 0)
+		return -1
+	endif
 	// unique form of these multiples
 	FindDuplicates/RT=tempW2 tempW
 	Variable nSub = numpnts(tempW2)
