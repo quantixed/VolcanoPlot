@@ -10,6 +10,7 @@
 Menu "Macros"
 	SubMenu "Proteomics"
 		"Load MaxQuant Data...", /Q, LoadMaxQuantData()
+		"Load Multiple MaxQuant...", /Q, LoadMultiMaxQuantData()
 		"Volcano Plot...", /Q, VolcanoIO_Panel()
 		SubMenu "Subcellular analysis"
 			"Make List to Retrieve Uniprot Data", /Q, UniprotTable()
@@ -27,12 +28,23 @@ End
 // Master functions and wrappers
 ////////////////////////////////////////////////////////////////////////
 
+// user selects a proteinGroups.txt file to analyse
+// user then specifies what is compared
 Function LoadMaxQuantData()
 	if(LoadMaxQuantFile() == 0)
 		VolcanoIO_Panel()
 	endif
 End
 
+// user selects a directory with sub-directories containing a proteinGroups.txt file
+// to analyse. User then specifies what is compared for each of the files
+Function LoadMultiMaxQuantData()
+	if(LoadMaxQuantFiles() == 0)
+		MakeExpSelectorPanel()
+	endif
+End
+
+// this is the original workflow to make a Volcano Plot and associated plots
 Function VolcanoWorkflowWrapper()
 	MakeVolcano()
 	MakeColorTableWave()
@@ -45,6 +57,7 @@ Function VolcanoWorkflowWrapper()
 //	SaveTheLayout()
 End
 
+// this wrapper allows the user to select proteins for display using GO terms
 Function UniprotWrapper()
 	if(LoadUniprot() == 0)
 		MatchResultsAndUniProt()
@@ -67,6 +80,20 @@ End
 
 Function LabelTopTenWorkflow()
 	LabelTopXProts(10)
+End
+
+Function MultiVolcanoWrapper()
+	ConsolidateData()
+	MergeTheData()
+	MakeMultiVolcano()
+	MakeColorTableWave()
+	MakeVPlot()
+	TableInterestingValues()
+	AddSignificantHitsToVolcano(0)
+	MakeMeanComparison()
+	FromVolcanoToPCA()
+	MakeTheLayout()
+//	SaveTheLayout()
 End
 
 ////////////////////////////////////////////////////////////////////////
@@ -115,6 +142,91 @@ Function LoadMaxQuantFile()
 	return 0
 End
 
+Function LoadMaxQuantFiles()
+	// find folder containing the subfolders
+	NewPath/O/Q/M="Please find disk folder" expDiskFolder
+	if (V_flag != 0)
+		DoAlert 0, "Disk folder error"
+		return -1
+	endif
+	PathInfo expDiskFolder
+	String diskFolderPath0 = S_Path
+	
+	// set up data folder and get ready to load
+	NewDataFolder/O/S root:data
+	// exp in this case means a unique proteomics experiment
+	String expDirList = IndexedDir(expDiskFolder,-1,0)
+	Variable nExp = ItemsInList(expDirList)
+	Make/O/N=(nExp)/T nameWave0
+	String dfName0, diskFolderPath1, dataFolderPath
+	String wName, newName, wList, newList, condList
+	Variable nWaves
+	
+	Variable i,j,k
+	
+	for (i = 0; i < nExp; i += 1)
+		nameWave0[i] = StringFromList(i,expDirList)
+		dfName0 = "exp_" + num2str(i)
+		NewDataFolder/O/S $dfName0
+		diskFolderPath1 = diskFolderPath0 + nameWave0[i] + ":"
+		NewPath/O/Q expDiskFolder1, diskFolderPath1
+		NewDataFolder/O/S $("data")
+		LoadWave/A/D/J/K=0/L={0,0,0,0,0}/V={"\t","",0,0}/W/O/P=expDiskFolder1/Q "proteinGroups.txt"
+		if(V_flag < 4)
+			DoAlert 0, "No proteinGroups file found for " + nameWave0[i]
+			return -1
+		endif
+		
+		dataFolderPath = "root:data:" + dfName0 + ":"
+		// for historical reasons these two waves need to be renamed
+		// place them in the exp folder
+		WAVE/Z/T Gene_names, Protein_names
+		Duplicate/O Gene_names, $(dataFolderPath + "SHORTNAME")
+		Duplicate/O Protein_names, $(dataFolderPath + "NAME")
+		Wave/T SHORTNAME = $(dataFolderPath + "SHORTNAME")
+		Wave/T NAME = $(dataFolderPath + "NAME")
+		// what LFQ values do we have - these are conditions and replicates
+		wList = WaveList("LFQ_Intensity*",";","")
+		condList = ReplaceString("LFQ_Intensity_",wList,"")
+		nWaves = ItemsInList(wList)
+		// save names of conditions from this proteinGroups file
+		GenerateConditionGroupWaves(condList,i)
+		newList = dataFolderPath + "SHORTNAME;" + dataFolderPath + "NAME;"
+	
+		for(j = 0; j < nWaves; j += 1)
+			wName = StringFromList(j,wList)
+			newName = dataFolderPath + StringFromList(j,condList)
+			Duplicate/O $wName, $newName
+			newList += newName + ";"
+		endfor
+	
+		// remove data where there is a blank in both SHORTNAME and NAME
+		nWaves = ItemsInList(newList)
+		Variable nRow = numpnts(Gene_Names)
+	
+		for(j = nRow - 1; j >= 0; j -= 1)
+			if(strlen(Gene_Names[j]) == 0 && strlen(Protein_names[j]) == 0)
+				for(k = 0; k < nWaves; k += 1)
+					DeletePoints j,1,$(StringFromList(k,newList))
+				endfor
+			endif
+		endfor
+		
+		SetDataFolder root:data:
+	endfor
+	SetDataFolder root:
+	return 0
+End
+
+STATIC Function GenerateConditionGroupWaves(STRING condList, VARIABLE ii)
+	Make/O/N=(ItemsInList(condList))/T $("root:data:cond_" + num2str(ii)) = StringFromList(p,condList)
+	Wave/T/Z tw = $("root:data:cond_" + num2str(ii))
+	Duplicate/O/FREE/T tw, temptw
+	temptw[] = tw[p][0][0][0][0,strlen(tw[p])-2] // this removes the last character - more than 9 replicates = problem
+	FindDuplicates/FREE/RT=uCond temptw
+	Duplicate/O/T uCond $("root:data:condMstr_" + num2str(ii))
+End
+
 // This function drives the whole program
 // Params are stored in two waves in root volcanoPrefixWave and volcanoParamWave
 Function MakeVolcano()
@@ -128,6 +240,7 @@ Function MakeVolcano()
 	Variable foldChange = log(abs(volcanoParamWave[3])) / log(2) // log2 value for threshold i.e. 1 is 2-fold change
 	Variable seed1 = volcanoParamWave[4] // 1-1000 value for seed
 	Variable seed2 = volcanoParamWave[5] // 1-1000 value for seed
+	Variable meanOpt = volcanoParamWave[6] // 1 is ratios v ratios, 0 is mean v mean
 	
 	String wList1 = WaveList(prefix1,";","")
 	String wList2 = WaveList(prefix2,";","")
@@ -199,7 +312,7 @@ End
 /// @param m0 2D wave containing data to be imputed
 STATIC Function TransformImputeBaseVal(m0)
 	WAVE m0
-	WAVE/Z volcanoParamWave
+	WAVE/Z volcanoParamWave = root:volcanoParamWave
 	// work out which wave we are doing condition 1 or condition 2
 	String wName = NameOfWave(m0)
 	Variable nn = str2num(wName[strlen(wName) - 1])
@@ -220,7 +333,7 @@ STATIC Function TransformImputeBaseVal(m0)
 	else
 		m1[][] = (m1[p][q] == baseVal) ? NaN : m1[p][q]
 	endif
-	// log tranform
+	// log transform
 	m1[][] = log(m1[p][q])
 	
 	Variable nCols = dimsize(m1,1)
@@ -310,7 +423,11 @@ Function AddSignificantHitsToVolcano(vpOpt)
 	for(i = 0; i < nRows; i += 1)
 		if(colorW[i] == 3)
 			if(strlen(shortnameW[i]) > 0)
-				labelStr += shortnameW[i] + "\r"
+				if(strsearch(shortnameW[i],";",0) == -1)
+					labelStr += shortnameW[i] + "\r"
+				else
+					labelStr += StringFromList(0,shortNameW[i]) + "\r"
+				endif
 			endif
 		elseif(colorW[i] == 2)
 			break
@@ -363,17 +480,19 @@ STATIC Function FromVolcanoToPCA()
 	else
 		MatrixOp/O forPCA = allCond1 / allCond2
 	endif
-	DoThePCA()
+	DoThePCA(0)
 End
 
 STATIC Function GetReadyForPCA(STRING selectedWavesList,VARIABLE baseVal)
 	Concatenate/O selectedWavesList, forPCA
 	// deal with baseVal - this uses random values even if a seed was used for other analyses
 	TransformImputeBaseVal(forPCA)
-	DoThePCA()
+	DoThePCA(1)
 End
 
-Function DoThePCA()
+Function DoThePCA(opt)
+	Variable opt // 1 means substitute 0 for missing values, 0 means delete whole row.
+	
 	KillWindow/Z pcaPlot
 	WAVE/Z forPCA
 	if(!WaveExists(forPCA))
@@ -381,26 +500,40 @@ Function DoThePCA()
 		return 0
 	endif
 	Variable nProt = dimsize(forPCA,0)
+	Variable nRep = dimsize(forPCA,1)
+	Variable nc
 	
 	WAVE/Z colorWave, colorTableWave
-	if(!WaveExists(colorWave) || nProt != DimSize(forPCA,0))
+	if(!WaveExists(colorWave))
 		Make/O/N=(nProt) colorWave=0
-		MakeColorTableWave()
-		WAVE/Z colorTableWave
 	endif
 	if(!WaveExists(colorTableWave))
 		MakeColorTableWave()
 		WAVE/Z colorTableWave
 	endif
+	// make a version of colorwave to display interesting proteins
+	Duplicate/O colorWave, colorPCAWave
+	
 	// pre-process data
-	// Previously we did
-//	MatrixOp/O forPCA = SubtractMean(forPCA,2)
-//	MatrixOp/O forPCA = NormalizeRows(forPCA)
-	// now we do:
 	// log2 transform
 	MatrixOp/O forPCA = log2(forPCA)
-	// in case we have NaN or Inf
-	forPCA[][] = (numtype(forPCA[p][q]) == 2 || numtype(forPCA[p][q]) == 1) ? 0 : forPCA[p][q]
+	// we have to deal with missing data
+	if(opt == 1)
+		// in case we have NaN or Inf - change to 0
+		forPCA[][] = (numtype(forPCA[p][q]) == 2 || numtype(forPCA[p][q]) == 1) ? 0 : forPCA[p][q]
+	else
+		// in case we have NaN or Inf - delete whole row
+		forPCA[][] = (numtype(forPCA[p][q]) == 2 || numtype(forPCA[p][q]) == 1) ? NaN : forPCA[p][q]
+		// set row with 1 or more NaN to all NaN
+		MatrixOp/O/FREE delW = sumrows(forPCA) / sumrows(forPCA)
+		forPCA[][] = forPCA[p][q] * delW[p]
+		MatrixOp/O forPCA = zapnans(forPCA)
+		nc = numpnts(forPCA) / nRep
+		MatrixOp/O forPCA = redimension(forPCA,nc,nRep)
+		// treat the colorPCAWave the same
+		colorPCAWave[] = colorPCAWave[p] * delW[p]
+		WaveTransform zapnans colorPCAWave
+	endif
 	// centre the data
 	MatrixOp/O forPCA = SubtractMean(forPCA,2)
 	// do the PCA, SRMT flag is needed to get M_R
@@ -408,8 +541,7 @@ Function DoThePCA()
 	WAVE/Z M_R
 	// M_R is inverse compared to the output from SIMCA-P+
 	M_R *= -1
-	// make a version of colorwave to display interesting proteins
-	Duplicate/O colorWave, colorPCAWave
+	
 	// display PC1 and PC2
 	Display/N=pcaPlot/W=(36,757,431,965) M_R[][1] vs M_R[][0]
 	// find min and max for PC1 and PC2 combined
@@ -742,6 +874,190 @@ Function AddGOTermsToVolcano()
 	TextBox/W=$plotName/C/N=GOTs/B=1/F=0/A=LT/X=15.00/Y=0.00 labelStr
 End
 
+Function ConsolidateData()
+	// for each exp go through the LFQ values and consolidate identical rows by summing
+	// rename and of the strings passed in prefixwave before doing this.
+	SetDataFolder root:
+	WAVE/T/Z volcanoPrefixWave
+	
+	Wave/Z selWave0 = root:data:selWave0
+	Wave/T/Z vTCWave = root:data:vTCWave
+	Variable counter = 0
+	String wList0, wList1
+	
+	Variable i
+	
+	for(i = 0; i < numpnts(selWave0); i += 1)
+		if(selWave0[i] == 0)
+			continue
+		endif
+		SetDataFolder $("root:data:exp_" + num2str(i))
+		WAVE/Z SHORTNAME, NAME
+		// rename SHORTNAME with aliases from prefixwave
+		RenameShortname(SHORTNAME, volcanoPrefixWave[0]) // only first alias list processed for now
+		// test
+		wList0 = WaveList(vTCWave[counter][0] + "*",";","")
+		Concatenate/O wList0, allCond1
+		// control
+		wList1 = WaveList(vTCWave[counter][1] + "*",";","")
+		Concatenate/O wList1, allCond2
+		// consolidate -- this deals with multiple entries (which must be vanquished before aligning all data
+		ConsolidateLFQs(SHORTNAME,NAME,allCond1,allCond2)
+		// Imputation (done per expt)
+		TransformImputeBaseVal(allCond1)
+		TransformImputeBaseVal(allCond2)
+		// get ready for next iteration
+		counter += 1
+		SetDataFolder root:
+	endfor
+End
+
+Function MergeTheData()
+	
+	Wave/Z selWave0 = root:data:selWave0
+	Wave/T/Z vTCWave = root:data:vTCWave
+	String wList = ""
+	
+	Variable i,j
+	
+	for(i = 0; i < numpnts(selWave0); i += 1)
+		if(selWave0[i] == 0)
+			continue
+		endif
+		wlist += "root:data:exp_" + num2str(i) + ":SHORTNAME;"
+	endfor
+	
+	// make a long version of SHORTNAME and NAME in root with all values
+	Concatenate/O/NP=0/T wList, longSHORTNAME
+	Concatenate/O/NP=0/T ReplaceString("SHORT",wList,""), longNAME
+	// get a list of unique SHORTNAMEs
+	FindDuplicates/RT=SHORTNAME longSHORTNAME
+	// now make a corresponding textwave of NAMEs
+	Variable nRow = numpnts(SHORTNAME)
+	Make/O/N=(nRow)/T NAME
+	
+	for(i = 0; i < nRow; i += 1)
+		FindValue/TEXT=(SHORTNAME[i]) longSHORTNAME
+		NAME[i] = longNAME[V_row]
+	endfor
+	
+	KillWaves/Z longNAME,longSHORTNAME
+	
+	// build shadow matrices for control and test for each experiment
+	// using the uSHORTNAME as key and then assemble
+	
+//	for each datafolder, find the two matrices and assess width
+//	make new matrix that has nRow and the right number of cols
+//	now, search for SHORTNAME values in the expt SHORTNAME
+//	for the hit, copy the data from matrices to the appropriate shadow matrix
+//	if value is missing, substitute NaN
+	
+	Variable nExp = ItemsInList(wList)
+	String wName, sName
+	
+	for(i = 0; i < nExp; i += 1)
+		// this is the full path to SHORTNAME for the expt
+		wName = StringFromList(i,wList)
+		Wave/T tw = $wName
+		Wave m1 = $(ReplaceString("SHORTNAME", wName, "allCond1"))
+		Wave m2 = $(ReplaceString("SHORTNAME", wName, "allCond2"))
+		sName = "shadow_" + num2str(i) + "_1"
+		Make/O/D/N=(nRow,DimSize(m1,1)) $sName
+		Wave s1 = $sName
+		sName = "shadow_" + num2str(i) + "_2"
+		Make/O/D/N=(nRow,DimSize(m2,1)) $sName
+		Wave s2 = $sName
+		
+		for(j = 0; j < nRow; j += 1)
+			FindValue/TEXT=(SHORTNAME[j]) tw
+			if(V_row == -1)
+				s1[j][] = NaN
+				s2[j][] = NaN
+			else
+				s1[j][] = m1[V_row][q]
+				s2[j][] = m2[V_row][q]
+			endif
+		endfor
+	endfor
+	
+	Concatenate/O/NP=1/KILL WaveList("shadow_*_1",";",""), allCond1
+	Concatenate/O/NP=1/KILL WaveList("shadow_*_2",";",""), allCond2
+End
+
+Function MakeMultiVolcano()
+	WAVE/Z volcanoParamWave, allCond1, allCond2
+	
+	Variable pairOpt = volcanoParamWave[1] // 1 is paired, 0 is not
+	Variable foldChange = log(abs(volcanoParamWave[3])) / log(2) // log2 value for threshold i.e. 1 is 2-fold change
+	Variable meanOpt = volcanoParamWave[6] // 1 is ratios v ratios, 0 is mean v mean
+	
+	// at this point we have the consolidated merged data it is log transformed (following imputation)
+	Variable pVar
+	Variable nProt = DimSize(allCond1,0)
+	Make/O/N=(nProt) allTWave, colorWave=0
+	
+	Variable i
+	
+	// do T-tests
+	for(i = 0; i < nProt; i += 1)
+		// we extract the row per protein. NaNs are present from missing values and must be removed
+		MatrixOp/O/FREE w0 = row(allCond1,i) ^ t
+		WaveTransform zapnans w0
+		MatrixOp/O/FREE w1 = row(allCond2,i) ^ t
+		WaveTransform zapnans w1
+		if(pairOpt == 0)
+			StatsTTest/Q/Z w0,w1
+		else
+			StatsTTest/Q/Z/PAIR w0,w1
+		endif
+		WAVE/Z W_StatsTTest
+		if(V_flag == 0)
+			pVar = W_StatsTTest[%P] // p-value
+		else
+			pVar = 1
+		endif
+		allTWave[i] = pVar
+	endfor
+	
+	// make mean waves - these need transformation back
+	allCond1[][] = 10^(allCond1[p][q])
+	allCond2[][] = 10^(allCond2[p][q])
+	
+	if(meanOpt == 1 && DimSize(allCond1,1) != DimSize(allCond2,1))
+		Print "Unequal replicates in test and control. Ratios v Ratios not possible."
+		meanOpt = 0
+	endif
+	
+	// because of potential NaNs we need a few extra steps
+	Duplicate/O/FREE allCond1, sumMat
+	sumMat[][] = (numtype(allCond1) == 2) ? 0 : 1 
+	MatrixOp/O meanCond1 = sumrows(replaceNaNs(allCond1,0)) / sumrows(sumMat)
+	Duplicate/O/FREE allCond2, sumMat
+	sumMat[][] = (numtype(allCond2) == 2) ? 0 : 1 
+	MatrixOp/O meanCond2 = sumrows(replaceNaNs(allCond2,0)) / sumrows(sumMat)
+	
+	// if we are doing mean vs mean
+	if(meanOpt == 0)
+		// ratio wave
+		MatrixOp/O ratioWave = meanCond1 / meanCond2
+	else
+		// otherwise we will compare ratio vs ratio
+		MatrixOp/O/FREE ratioMat = allCond1 / allCond2
+		Duplicate/O/FREE ratioMat, sumMat
+		sumMat[][] = (numtype(ratioMat) == 2) ? 0 : 1 
+		// ratio wave
+		MatrixOp/O ratioWave = sumrows(replaceNaNs(ratioMat,0)) / sumrows(sumMat)
+		// note that I tried an alternative way to calc meanCond1/2 and it was no better
+	endif
+	// ratios need converting to Log2 for volcanoPlot
+	Duplicate/O ratioWave,ratioWave_log2
+	ratioWave_log2[] = log(abs(ratioWave[p])) / log(2)
+	// assign colors
+	colorWave[] = (ratioWave_log2[p] >= foldChange && abs(allTwave[p] <= 0.05)) ? 3 : colorWave[p]
+	colorWave[] = (ratioWave_log2[p] <= -foldChange && abs(allTwave[p] <= 0.05)) ? 2 : colorWave[p]
+	colorWave[] = (ratioWave_log2[p] >= foldChange && abs(allTwave[p] > 0.05)) ? 1 : colorWave[p]
+End
+
 ////////////////////////////////////////////////////////////////////////
 // Panel functions
 ////////////////////////////////////////////////////////////////////////
@@ -752,7 +1068,7 @@ Function VolcanoIO_Panel()
 	if(!WaveExists(volcanoPrefixWave))
 		Make/O/N=(2)/T volcanoPrefixWave = {"prefix1*","prefix2*"}
 		Make/O/N=(2)/T volcanoLabelWave = {"Test","Control"}
-		Make/O/N=(6) volcanoParamWave = {0,0,1,2,1,2}
+		Make/O/N=(7) volcanoParamWave = {0,0,1,2,1,2,0}
 	endif
 	// they are called prefix but suffix (or any wildcard search string is fine)
 	String prefix1 = volcanoPrefixWave[0]
@@ -766,6 +1082,7 @@ Function VolcanoIO_Panel()
 	Variable foldChange = volcanoParamWave[3]
 	Variable seed1 = volcanoParamWave[4]
 	Variable seed2 = volcanoParamWave[5]
+	Variable meanOpt = volcanoParamWave[6] // not used yet
 	
 	DoWindow/K VolcanoSetup
 	NewPanel/N=VolcanoSetup/K=1/W=(81,73,774,240)
@@ -921,6 +1238,243 @@ Function doPCAButtonProc(ctrlName) : ButtonControl
 	GetReadyForPCA(selectedWavesList,baseVal)
 End
 
+
+// Multiple MaxQuant panels start here
+Function MakeExpSelectorPanel()
+	
+	String panelName = "ExpSelector"
+	Wave/T/Z lbNameWave = root:data:nameWave0
+	Wave/Z lbSelWave = root:data:selWave0
+	if(!WaveExists(lbNameWave))
+		return -1
+	elseif(!WaveExists(lbSelWave))
+		Make/O/N=(numpnts(lbNameWave)) $"root:data:selWave0" = 0
+		Wave/Z lbSelWave = root:data:selWave0
+	endif
+	
+	if (WinType(panelName) == 7)
+		// if the panel already exists, show it
+		DoWindow/F $panelName
+	else
+		// doesn't exist, make it
+		NewPanel/K=1/N=$panelName/W=(181,179,471,540) as "Select Experiments"
+		// list box control to select experiments
+		ListBox list0, pos={9,13}, size={273,241}, listWave=root:data:nameWave0
+		ListBox list0, selWave=root:data:selWave0, mode=4
+		DrawText/W=$panelName 10,280,"Shift + click for multiple selection"
+		Button next,pos={9,330},size={110,20},proc=ExptNextButtonProc,title="Next"
+	endif
+End
+
+Function ExptNextButtonProc(ba) : ButtonControl
+	STRUCT WMButtonAction &ba
+
+	switch( ba.eventCode )
+		case 2: // mouse up
+			// click code here
+			Wave/T/Z lbNameWave = root:data:nameWave0
+			Wave/Z lbSelWave = root:data:selWave0
+			if(sum(lbSelWave) == 0)
+				DoAlert 0, "No waves selected."
+				break
+			endif
+			Variable index, maxindex
+			maxindex = numpnts(lbSelWave)
+			Print "Experiments selected:\r"
+			for(index = 0; index < maxindex; index += 1)
+				if(lbSelWave[index])
+					Print lbNameWave[index]+"\r"
+				endif
+			endfor
+			KillWindow/Z $(ba.win)
+			MakeCondSelectorPanel()
+			break
+		case -1: // control being killed
+			break
+	endswitch
+
+	return 0
+End
+
+
+Function MakeCondSelectorPanel()
+	
+	String panelName = "CondSelector"
+	
+	Wave/T/Z lbNameWave = root:data:nameWave0
+	Wave/Z lbSelWave = root:data:selWave0
+	Variable nExp = sum(lbSelWave) // number of experiments selected in previous panel ROWS
+	Make/O/N=(nExp)/T $"root:data:vExpWave"
+	Wave/T/Z vExpW = root:data:vExpWave
+	Make/O/N=(nExp,2)/T $"root:data:vTCWave"
+	Wave/T/Z vTCW = root:data:vTCWave
+	
+	// analagous to VP we set up the equivalent
+	WAVE/Z/T volcanoPrefixWave, volcanoLabelWave
+	WAVE/Z volcanoParamWave
+	if(!WaveExists(volcanoPrefixWave))
+		Make/O/N=(2)/T volcanoPrefixWave = {"gene1;altname1;altname2",""}
+		Make/O/N=(2)/T volcanoLabelWave = {"Test","Control"}
+		Make/O/N=(7) volcanoParamWave = {0,1,1,2,1,2,1}
+	endif
+	
+	String prefix1 = volcanoPrefixWave[0]
+	String prefix2 = volcanoPrefixWave[1]
+	String label1 = volcanoLabelWave[0]
+	String label2 = volcanoLabelWave[1]
+	// pick up parameters
+	Variable baseVal = volcanoParamWave[0]
+	Variable pairOpt = volcanoParamWave[1]
+	Variable seedOpt = volcanoParamWave[2]
+	Variable foldChange = volcanoParamWave[3]
+	Variable seed1 = volcanoParamWave[4]
+	Variable seed2 = volcanoParamWave[5]
+	Variable meanOpt = volcanoParamWave[6]
+	
+	// build panel
+	KillWindow/Z $panelName
+	NewPanel/K=1/N=$panelName/W=(40,40,733,210+30*nExp) as "Select Conditions"
+	// labelling of columns
+	TitleBox tb0,pos={10,10},size={115,20},title="Experiment:",fstyle=1,fsize=11,labelBack=(55000,55000,65000),frame=0
+	TitleBox tb1,pos={167,10},size={115,20},title="Test (select)",fstyle=1,fsize=11,labelBack=(55000,55000,65000),frame=0
+	TitleBox tb2,pos={358,10},size={115,20},title="Control (select)",fstyle=1,fsize=11,labelBack=(55000,55000,65000),frame=0
+	
+	String testBox, ctrlBox, str
+	Variable row = 0
+	
+	Variable i
+
+	for(i = 0; i < numpnts(lbSelWave); i += 1)
+		if(lbSelWave[i] == 0)
+			continue
+		endif
+		// row label
+		TitleBox $("texpb"+num2str(row)),pos={10,38+row*30},size={115,20},title=lbNameWave[i],fstyle=1,fsize=11,labelBack=(55000,65000,55000),frame=0
+		// record which experiment the row corresponds to
+		vExpW[row] = lbNameWave[i]
+		// test box
+		testBox = "testBox_" + num2str(row)
+		Wave/T tw = $("root:data:condMstr_" + num2str(i))
+		wfprintf str, "%s;", tw 	// Carriage-return separated list
+		str = "\"" + str + "\""
+		PopupMenu $testBox,pos={140,38+row*30},size={216,20},proc=GroupSelPopProc,title="Test"
+		PopupMenu $testBox,mode=1,value= #str
+		// control box
+		ctrlBox = "ctrlBox_" + num2str(row)
+		PopupMenu $ctrlBox,pos={320,38+row*30},size={216,20},proc=GroupSelPopProc,title="Control"
+		PopupMenu $ctrlBox,mode=1,value= #str
+		// set test and control conditions to the first value in list to match the panel
+		vTCW[row][] = tw[0]
+		row += 1
+	endfor
+	
+	// bottom part of panel
+	Variable offset = 10 + (row+1) * 30
+	// labels
+	SetVariable box3,pos={130,offset},size={140,16},title="Label:",value=_STR:label1
+	SetVariable box4,pos={322,offset},size={140,16},title="Label:",value=_STR:label2
+	// renaming - here we repurpose the prefix wave for
+	TitleBox tb5,pos={320,offset+30},size={115,20},title="Combination:",fstyle=1,fsize=11,labelBack=(65000,55000,65000),frame=0
+	SetVariable box1,pos={320,offset+50},size={240,16},title="Combine (optional):",value=_STR:prefix1
+	SetVariable box2,pos={320,offset+69},size={240,16},title="Combine (optional):",value=_STR:prefix2
+	
+	TitleBox tb6,pos={10,offset+30},size={115,20},title="Other:",fstyle=1,fsize=11,labelBack=(65000,55000,65000),frame=0
+	SetVariable box5,pos={10,offset+50},size={250,16},title="What value represents absent proteins?",format="%g",value=_NUM:baseVal
+	SetVariable box6,pos={10,offset+69},size={250,16},title="Fold-change (2 is twofold)?",format="%g",value=_NUM:foldChange
+	CheckBox box7,pos={10,offset+88},size={20,20},title="Analyse paired data?",value=pairOpt,mode=0
+	CheckBox box11,pos={10,offset+103},size={20,20},title="Ratios v Ratios?",value=meanOpt,mode=0
+	CheckBox box8,pos={528,97},size={20,20},title="Reproducibly random?",value=seedOpt,mode=0
+	
+	TitleBox tb3,pos={528,10},size={115,20},title="Imputation:",fstyle=1,fsize=11,labelBack=(65000,55000,65000),frame=0
+	SetVariable box9,pos={528,38},size={150,16},title="Seed for condition 1:",format="%g",value=_NUM:seed1
+	SetVariable box10,pos={528,59},size={150,16},title="Seed for condition 2:",format="%g",value=_NUM:seed2
+	TitleBox tb4,pos={528,77},size={115,20},title="Pick a value between 1 and 1000",fstyle=0,fsize=9,frame=0
+	// add Do It button
+	Button DoIt,pos={573,140+30*nExp},size={110,20},proc=DoItMultiButtonProc,title="Do It"
+End
+
+Function GroupSelPopProc(ctrlName,popNum,popStr) : PopupMenuControl
+	String ctrlName
+	Variable popNum
+	String popStr
+
+	Wave/T/Z vTCW = root:data:vTCWave
+	if(cmpstr(ctrlName[0,3],"test") == 0)
+		vTCW[str2num(ctrlName[8])][0] = popStr
+	else
+		vTCW[str2num(ctrlName[8])][1] = popStr
+	endif
+End
+
+Function DoItMultiButtonProc(ba) : ButtonControl
+	STRUCT WMButtonAction &ba
+
+	switch( ba.eventCode )
+		case 2: // mouse up
+			// click code here
+			Wave/T/Z vTCW = root:data:vTCWave
+			if(CheckForConflicts(vTCW) == 0)
+				// progress
+			else
+				Print "Test and Control group conflict"
+				break
+			endif
+			// collect all the values
+			ControlInfo/W=$ba.win box1
+			String prefix1 = S_Value
+			ControlInfo/W=$ba.win box2
+			String prefix2 = S_Value
+			ControlInfo/W=$ba.win box3
+			String label1 = S_Value
+			ControlInfo/W=$ba.win box4
+			String label2 = S_Value
+			ControlInfo/W=$ba.win box5
+			Variable baseVal = V_Value
+			ControlInfo/W=$ba.win box6
+			Variable foldChange = V_Value
+			ControlInfo/W=$ba.win box7
+			Variable pairOpt = V_Value
+			ControlInfo/W=$ba.win box8
+			Variable seedOpt = V_Value
+			ControlInfo/W=$ba.win box9
+			Variable seed1 = V_Value
+			ControlInfo/W=$ba.win box10
+			Variable seed2 = V_Value
+			ControlInfo/W=$ba.win box11
+			Variable meanOpt = V_Value
+		
+			Print "Test group:", label1, "\rControl group:", label2
+			Print "Value for imputation:", baseVal, "\rFold-change:", foldChange
+			if(pairOpt == 1)
+				Print "Using paired data."
+			endif
+			if(seedOpt == 1)
+				Print "Using RNG seeds:", label1, "=", seed1, "&", label2, "=", seed2
+			endif
+			WAVE/Z/T volcanoPrefixWave = root:volcanoPrefixWave, volcanoLabelWave = root:volcanoLabelWave
+			volcanoPrefixWave[0] = prefix1
+			volcanoPrefixWave[1] = prefix2
+			volcanoLabelWave[0] = label1
+			volcanoLabelWave[1] = label2
+			WAVE/Z volcanoParamWave = root:volcanoParamWave
+			volcanoParamWave[0] = baseVal
+			volcanoParamWave[1] = pairOpt
+			volcanoParamWave[2] = seedOpt
+			volcanoParamWave[3] = foldChange
+			volcanoParamWave[4] = seed1
+			volcanoParamWave[5] = seed2
+			volcanoParamWave[6] = meanOpt
+			KillWindow/Z $(ba.win)
+			MultiVolcanoWrapper()
+			break
+		case -1: // control being killed
+			break
+	endswitch
+
+	return 0
+End
+
+
 ////////////////////////////////////////////////////////////////////////
 // Utility functions
 ////////////////////////////////////////////////////////////////////////
@@ -997,5 +1551,100 @@ STATIC Function DeleteEmptyCellsFromTextWave(tw)
 		if(strlen(tw[i]) == 0)
 			DeletePoints i, 1, tw
 		endif   
+	endfor
+End
+
+STATIC Function CheckForConflicts(tw)
+	WAVE/T tw
+	Variable nRow = DimSize(tw,0)
+	Variable i
+	for(i = 0; i < nRow; i += 1)
+		if(cmpstr(tw[i][0],tw[i][1]) == 0)
+			return 1
+		endif
+	endfor
+	
+	return 0
+End
+
+STATIC Function RenameShortname(tw,str)
+	WAVE/T tw
+	String str
+	// string is of the form keepName;alias1;alias2;
+	String keep = StringFromList(0,str)
+	String aliases = RemoveFromList(keep,str)
+	Variable i
+	for(i = 0; i < ItemsInList(aliases); i += 1)
+		tw[] = SelectString(cmpstr(tw[p],StringFromList(i,aliases)),keep,tw[p])
+	endfor
+End
+
+STATIC Function ConsolidateLFQs(tw0,tw1,m0,m1)
+	WAVE/T tw0,tw1
+	WAVE m0,m1
+	// get list of proteins with multiple entries
+	FindDuplicates/DT=tempW tw0
+	// unique form of these multiples
+	FindDuplicates/RT=tempW2 tempW
+	Variable nSub = numpnts(tempW2)
+	Variable nRow, nr
+	Variable nc0 = DimSize(m0,1)
+	Variable nc1 = DimSize(m1,1)
+	
+	Variable i
+	
+	for(i = 0; i < nSub; i += 1)
+		nRow = numpnts(tw0) // this will change
+		Make/O/FREE/N=(nRow)/I/U matchW=0
+		matchW[] = (cmpstr(tempW2[i],tw0) == 0) ? 1 : 0
+		if(sum(matchW) < 2)
+			continue
+		endif
+		FindValue/I=1 matchW
+		// first row is V_row
+		// there should be no NaNs so...
+		Duplicate/O/FREE m0,m2
+		m2[][] = m0[p][q] * matchW[p]
+		MatrixOp/O/FREE sumMat = sumCols(m2)
+		m0[V_row][] = sumMat[0][q]
+		// and...
+		Duplicate/O/FREE m1,m3
+		m3[][] = m1[p][q] * matchW[p]
+		MatrixOp/O/FREE sumMat = sumCols(m3)
+		m1[V_row][] = sumMat[0][q]
+		// now erase the other rows
+		matchW[V_row] = 0
+		// we cannot do something like
+//		tw0[] = SelectString(matchW[p],tw0[p],"")
+//		DeleteEmptyCellsFromTextWave(tw0)
+		// because there could be empty rows for other reasons
+		DeleteTheseCellsFrom1DTextWave(tw0,matchW)
+		DeleteTheseCellsFrom1DTextWave(tw1,matchW)
+		// and from matrices
+		m0[][] = (matchW[p] == 1) ? NaN : m0[p][q]
+		MatrixOp/O/FREE zW = zapNaNs(m0)
+		nr = numpnts(zW) / nc0
+		MatrixOp/O m0 = redimension(zW,nr,nc0)
+		m1[][] = (matchW[p] == 1) ? NaN : m1[p][q]
+		MatrixOp/O/FREE zW = zapNaNs(m1)
+		nr = numpnts(zW) / nc1
+		MatrixOp/O m1 = redimension(zW,nr,nc1)
+		if(numpnts(tw0) != nr || numpnts(tw1) != nr || DimSize(m0,0) != nr)
+			Print "Error in consolidation"
+		endif
+	endfor
+	
+	KillWaves/Z tempW, tempW2
+End
+
+STATIC Function DeleteTheseCellsFrom1DTextWave(w,delw)
+	Wave/T w
+	Wave delW
+	Variable i, nRow = numpnts(delw)
+	
+	for(i = nRow - 1; i >= 0; i -= 1)
+		if(delW[i] == 1)
+			DeletePoints i,1,w
+		endif
 	endfor
 End
