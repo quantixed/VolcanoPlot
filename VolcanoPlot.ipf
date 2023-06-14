@@ -16,6 +16,7 @@ Menu "Macros"
 //			"PCA Only...", /Q, MakePCAWaveSelectorPanel() // hide this option
 			"Label Top 10", /Q, LabelTopTenWorkflow()
 			"Save Layout", /Q, SaveTheLayout()
+			"Save Table", /Q, SaveTheTable()
 		end
 		SubMenu "Subcellular analysis"
 			"Make List to Retrieve Uniprot Data", /Q, UniprotTable()
@@ -388,7 +389,7 @@ Function MakeVPlot()
 	Variable minPVar = wavemin(allTWave)
 	minPVar = 10 ^ (floor((log(minPVar))))
 	SetAxis/W=volcanoPlot bottom -maxVar,maxVar
-	ModifyGraph/W=volcanoPlot mode=3,marker=19,mrkThick=0
+	ModifyGraph/W=volcanoPlot mode=3,marker=19,msize=2,mrkThick=0
 	SetDrawEnv/W=volcanoPlot xcoord= bottom,ycoord= left,dash= 3;DelayUpdate
 	DrawLine/W=volcanoPlot -maxVar,0.05,maxVar,0.05
 	SetDrawEnv/W=volcanoPlot xcoord= bottom,ycoord= left,dash= 3;DelayUpdate
@@ -478,7 +479,7 @@ Function MakeMeanComparison()
 	ModifyGraph/W=meanPlot width={Plan,1,bottom,left}
 	ModifyGraph/W=meanPlot mode=3,marker=19
 	ModifyGraph/W=meanPlot zColor(meanCond1)={colorWave,0,3,cindexRGB,0,colorTableWave}
-	ModifyGraph/W=meanPlot msize=3,mrkThick=0
+	ModifyGraph/W=meanPlot msize=2,mrkThick=0
 	Label/W=meanPlot left volcanoLabelWave[0]
 	Label/W=meanPlot bottom volcanoLabelWave[1]
 	SetWindow meanPlot, hook(modified)=thunk_hook
@@ -575,7 +576,7 @@ Function DoThePCA(opt)
 	SetAxis/W=pcaPlot bottom V_min,V_max
 	ModifyGraph/W=pcaPlot mode=3,marker=19,mrkThick=0
 	ModifyGraph/W=pcaPlot zColor(M_R)={colorPCAWave,0,3,ctableRGB,0,colorTableWave}
-	ModifyGraph/W=pcaPlot zmrkSize(M_R)={colorPCAWave,0,1,1,2}
+	ModifyGraph/W=pcaPlot zmrkSize(M_R)={colorPCAWave,0,1,1,1.5}
 	ModifyGraph/W=pcaPlot zero=4,mirror=1
 	Label/W=pcaPlot left "PC2"
 	Label/W=pcaPlot bottom "PC1"
@@ -651,6 +652,13 @@ Function SaveTheLayout()
 	fileName = "summaryLayout_" + volcanoLabelWave[0] + "vs" + volcanoLabelWave[1] + ".png"
 	SavePICT/O/WIN=summaryLayout/P=DiskFolder/E=-5/RES=300 as fileName
 End
+
+Function SaveTheTable()
+	WAVE/Z/T volcanoLabelWave
+	String fileName = "rankTable_" + volcanoLabelWave[0] + "vs" + volcanoLabelWave[1] + ".txt"
+	Save/B/J/M="\n"/P=DiskFolder/W "so_NAME;so_SHORTNAME;so_productWave;so_colorWave;so_allTWave;so_ratioWave;so_keyW;" as fileName
+End
+
 
 // This function will load an output from UniProt.
 // Using a list of gene names from VolcanoPlot output (via copy/paste), query in UniProt ID mapping
@@ -911,7 +919,7 @@ Function ConsolidateData()
 		// control
 		wList1 = WaveList(vTCWave[counter][1] + "*",";","")
 		Concatenate/O wList1, allCond2
-		// consolidate -- this deals with multiple entries (which must be vanquished before aligning all data
+		// consolidate -- this deals with multiple entries (which must be vanquished before aligning all data)
 		ConsolidateLFQs(SHORTNAME,NAME,allCond1,allCond2)
 		// Imputation (done per expt)
 		TransformImputeBaseVal(allCond1)
@@ -949,7 +957,7 @@ Function MergeTheData()
 	Make/O/N=(nRow)/T NAME
 	
 	for(i = 0; i < nRow; i += 1)
-		FindValue/TEXT=(SHORTNAME[i]) longSHORTNAME
+		FindValue/TEXT=(SHORTNAME[i])/TXOP=2 longSHORTNAME
 		NAME[i] = longNAME[V_row]
 	endfor
 	
@@ -981,7 +989,7 @@ Function MergeTheData()
 		Wave s2 = $sName
 		
 		for(j = 0; j < nRow; j += 1)
-			FindValue/TEXT=(SHORTNAME[j]) tw
+			FindValue/TEXT=(SHORTNAME[j])/TXOP=2 tw
 			if(V_row == -1)
 				s1[j][] = NaN
 				s2[j][] = NaN
@@ -1043,7 +1051,7 @@ Function VolcanoIO_Panel()
 	Button DoIt,pos={564,140},size={100,20},proc=ButtonProc,title="Do It"
 End
  
-Function ButtonProc(ba) 
+Function ButtonProc(ba) : ButtonControl
 	STRUCT WMButtonAction &ba
 	if( ba.eventCode != 2 )
 		return 0
@@ -1111,7 +1119,7 @@ Function GOTerm_Panel()
 	Button filter,pos={271,434},size={100,20},proc=GOTProc,title="Filter"
 End
 
-Function GOTProc(ba) 
+Function GOTProc(ba) : ButtonControl
 	STRUCT WMButtonAction &ba
 	
 	if( ba.eventCode != 2 )
@@ -1449,7 +1457,7 @@ Function thunk_hook(s)
 			String targetTrace = StringByKey("TRACE", s_traceinfo) // now takes whatever trace is clicked on
  
 			if (numtype(v_pt) != 2)
-				Tag/c/n=t1/b=3/f=0/s=3/v=1/X=10/Y=10 $targetTrace, v_pt, SHORTNAME[v_pt]
+				Tag/a=LB/c/n=t1/b=1/f=0/s=3/v=1/X=5/Y=5 $targetTrace, v_pt, SHORTNAME[v_pt]
 			else
 				Tag/n=t1/k
 			endif
@@ -1475,7 +1483,7 @@ Function filt_thunk_hook(s)
 			String targetTrace = StringByKey("TRACE", s_traceinfo) // now takes whatever trace is clicked on
  
 			if (numtype(v_pt) != 2)
-				Tag/c/n=t1/b=3/f=0/s=3/v=1/X=10/Y=10 $targetTrace, v_pt, ft_SHORTNAME[v_pt]
+				Tag/a=LB/c/n=t1/b=1/f=0/s=3/v=1/X=5/Y=5 $targetTrace, v_pt, ft_SHORTNAME[v_pt]
 			else
 				Tag/n=t1/k
 			endif
@@ -1542,7 +1550,7 @@ STATIC Function ConsolidateLFQs(tw0,tw1,m0,m1)
 	WAVE/T tw0,tw1
 	WAVE m0,m1
 	// get list of proteins with multiple entries
-	FindDuplicates/DT=tempW tw0
+	FindDuplicates/DT=tempW tw0 // this is SHORTNAME
 	if(numpnts(tempW) == 0)
 		return -1
 	endif
