@@ -102,6 +102,7 @@ Function LoadMaxQuantFile()
 	endif
 	NewPath/O/Q DiskFolder, S_Path
 	WAVE/Z/T Gene_names, Protein_names
+	WAVE/Z/T Potential_contaminant, Only_identified_by_site, ReverseW
 	Duplicate/O Gene_names, root:SHORTNAME
 	Duplicate/O Protein_names, root:NAME
 	Wave/T SHORTNAME = $("root:SHORTNAME")
@@ -120,17 +121,25 @@ Function LoadMaxQuantFile()
 		newList += newName + ";"
 	endfor
 	
-	// remove data where there is a blank in both SHORTNAME and NAME
+	// remove data where there is
+	// a "+" in Potential_contaminant, Only_identified_by_site, or ReverseW
+	// or a blank in both SHORTNAME and NAME
 	nWaves = ItemsInList(newList)
 	Variable nRow = numpnts(Gene_Names)
 	
 	for(i = nRow - 1; i >= 0; i -= 1)
-		if(strlen(Gene_Names[i]) == 0 && strlen(Protein_names[i]) == 0)
+		if(cmpstr(Potential_contaminant[i],"+") == 0 || cmpstr(Only_identified_by_site[i],"+") == 0 || cmpstr(ReverseW[i],"+") == 0)
+			for(j = 0; j < nWaves; j += 1)
+				DeletePoints i,1,$(StringFromList(j,newList))
+			endfor
+		elseif(strlen(Gene_Names[i]) == 0 && strlen(Protein_names[i]) == 0)
 			for(j = 0; j < nWaves; j += 1)
 				DeletePoints i,1,$(StringFromList(j,newList))
 			endfor
 		endif
 	endfor
+	
+	// now we are left with 
 	
 	SetDataFolder root:
 	return 0
@@ -175,6 +184,7 @@ Function LoadMaxQuantFiles()
 		// for historical reasons these two waves need to be renamed
 		// place them in the exp folder
 		WAVE/Z/T Gene_names, Protein_names
+		WAVE/Z/T Potential_contaminant, Only_identified_by_site, ReverseW
 		Duplicate/O Gene_names, $(dataFolderPath + "SHORTNAME")
 		Duplicate/O Protein_names, $(dataFolderPath + "NAME")
 		Wave/T SHORTNAME = $(dataFolderPath + "SHORTNAME")
@@ -194,12 +204,18 @@ Function LoadMaxQuantFiles()
 			newList += newName + ";"
 		endfor
 	
-		// remove data where there is a blank in both SHORTNAME and NAME
+		// remove data where there is
+		// a "+" in Potential_contaminant, Only_identified_by_site, or ReverseW
+		// or a blank in both SHORTNAME and NAME
 		nWaves = ItemsInList(newList)
 		Variable nRow = numpnts(Gene_Names)
 	
 		for(j = nRow - 1; j >= 0; j -= 1)
-			if(strlen(Gene_Names[j]) == 0 && strlen(Protein_names[j]) == 0)
+			if(cmpstr(Potential_contaminant[j],"+") == 0 || cmpstr(Only_identified_by_site[j],"+") == 0 || cmpstr(ReverseW[j],"+") == 0)
+				for(k = 0; k < nWaves; k += 1)
+					DeletePoints j,1,$(StringFromList(k,newList))
+				endfor
+			elseif(strlen(Gene_Names[j]) == 0 && strlen(Protein_names[j]) == 0)
 				for(k = 0; k < nWaves; k += 1)
 					DeletePoints j,1,$(StringFromList(k,newList))
 				endfor
