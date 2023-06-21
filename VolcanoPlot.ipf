@@ -101,16 +101,18 @@ Function LoadMaxQuantFile()
 		return -1
 	endif
 	NewPath/O/Q DiskFolder, S_Path
-	WAVE/Z/T Gene_names, Protein_names
+	WAVE/Z/T Gene_names, Protein_names, Protein_IDs, Fasta_headers
 	WAVE/Z/T Potential_contaminant, Only_identified_by_site, ReverseW
 	Duplicate/O Gene_names, root:SHORTNAME
 	Duplicate/O Protein_names, root:NAME
+	Duplicate/O Protein_IDs, root:PID
 	Wave/T SHORTNAME = $("root:SHORTNAME")
 	Wave/T NAME = $("root:NAME")
 	String wList = WaveList("LFQ_Intensity*",";","")
 	Variable nWaves = ItemsInList(wList)
-	String newList = "root:SHORTNAME;root:NAME;"
-	String wName, newName
+	String newList = "root:SHORTNAME;root:NAME;root:PID;"
+	String wName, newName, fasta
+	Variable start, stop
 	
 	Variable i,j
 	
@@ -121,25 +123,40 @@ Function LoadMaxQuantFile()
 		newList += newName + ";"
 	endfor
 	
+	// repopulate blanks in Gene_names and Protein_names column using Fasta_headers
+	Variable nRow = numpnts(Gene_Names)
+	
+	for(i = 0; i < nRow; i += 1)
+		if(strlen(SHORTNAME[i]) > 0 && strlen(NAME[i]) > 0)
+			continue
+		endif
+		fasta = StringFromList(0,Fasta_headers[i])
+		if(strlen(SHORTNAME[i]) == 0)
+			start = strsearch(fasta," GN=",0) + 4
+			stop = strsearch(fasta," ",start) - 1
+			if(stop < 0)
+				stop = strlen(fasta) - 1
+			endif
+			SHORTNAME[i] = fasta[start,stop]
+		endif
+		if(strlen(NAME[i]) == 0)
+			start = strsearch(fasta," ",0) + 1
+			stop = strsearch(fasta," OS=",0) - 1
+			NAME[i] = fasta[start,stop]
+		endif
+	endfor
+	
 	// remove data where there is
 	// a "+" in Potential_contaminant, Only_identified_by_site, or ReverseW
-	// or a blank in both SHORTNAME and NAME
 	nWaves = ItemsInList(newList)
-	Variable nRow = numpnts(Gene_Names)
 	
 	for(i = nRow - 1; i >= 0; i -= 1)
 		if(cmpstr(Potential_contaminant[i],"+") == 0 || cmpstr(Only_identified_by_site[i],"+") == 0 || cmpstr(ReverseW[i],"+") == 0)
 			for(j = 0; j < nWaves; j += 1)
 				DeletePoints i,1,$(StringFromList(j,newList))
 			endfor
-		elseif(strlen(Gene_Names[i]) == 0 && strlen(Protein_names[i]) == 0)
-			for(j = 0; j < nWaves; j += 1)
-				DeletePoints i,1,$(StringFromList(j,newList))
-			endfor
 		endif
 	endfor
-	
-	// now we are left with 
 	
 	SetDataFolder root:
 	return 0
@@ -162,8 +179,8 @@ Function LoadMaxQuantFiles()
 	Variable nExp = ItemsInList(expDirList)
 	Make/O/N=(nExp)/T nameWave0
 	String dfName0, diskFolderPath1, dataFolderPath
-	String wName, newName, wList, newList, condList
-	Variable nWaves
+	String wName, newName, wList, newList, condList, fasta
+	Variable nRow, nWaves, start, stop
 	
 	Variable i,j,k
 	
@@ -183,10 +200,11 @@ Function LoadMaxQuantFiles()
 		dataFolderPath = "root:data:" + dfName0 + ":"
 		// for historical reasons these two waves need to be renamed
 		// place them in the exp folder
-		WAVE/Z/T Gene_names, Protein_names
+		WAVE/Z/T Gene_names, Protein_names, Protein_IDs, Fasta_headers
 		WAVE/Z/T Potential_contaminant, Only_identified_by_site, ReverseW
 		Duplicate/O Gene_names, $(dataFolderPath + "SHORTNAME")
 		Duplicate/O Protein_names, $(dataFolderPath + "NAME")
+		Duplicate/O Protein_IDs, $(dataFolderPath + "PID")
 		Wave/T SHORTNAME = $(dataFolderPath + "SHORTNAME")
 		Wave/T NAME = $(dataFolderPath + "NAME")
 		// what LFQ values do we have - these are conditions and replicates
@@ -195,7 +213,7 @@ Function LoadMaxQuantFiles()
 		nWaves = ItemsInList(wList)
 		// save names of conditions from this proteinGroups file
 		GenerateConditionGroupWaves(condList,i)
-		newList = dataFolderPath + "SHORTNAME;" + dataFolderPath + "NAME;"
+		newList = dataFolderPath + "SHORTNAME;" + dataFolderPath + "NAME;" + dataFolderPath + "PID;"
 	
 		for(j = 0; j < nWaves; j += 1)
 			wName = StringFromList(j,wList)
@@ -203,19 +221,33 @@ Function LoadMaxQuantFiles()
 			Duplicate/O $wName, $newName
 			newList += newName + ";"
 		endfor
+		
+		// repopulate blanks in Gene_names and Protein_names column using Fasta_headers
+		nRow = numpnts(Gene_Names)
+		
+		for(j = 0; j < nRow; j += 1)
+			if(strlen(SHORTNAME[j]) > 0 && strlen(NAME[j]) > 0)
+				continue
+			endif
+			fasta = StringFromList(0,Fasta_headers[j])
+			if(strlen(SHORTNAME[j]) == 0)
+				start = strsearch(fasta," GN=",0) + 4
+				stop = strsearch(fasta," ",start) - 1
+				SHORTNAME[j] = fasta[start,stop]
+			endif
+			if(strlen(NAME[j]) == 0)
+				start = strsearch(fasta," ",0) + 1
+				stop = strsearch(fasta," OS=",0) - 1
+				NAME[j] = fasta[start,stop]
+			endif
+		endfor
 	
 		// remove data where there is
 		// a "+" in Potential_contaminant, Only_identified_by_site, or ReverseW
-		// or a blank in both SHORTNAME and NAME
 		nWaves = ItemsInList(newList)
-		Variable nRow = numpnts(Gene_Names)
 	
 		for(j = nRow - 1; j >= 0; j -= 1)
 			if(cmpstr(Potential_contaminant[j],"+") == 0 || cmpstr(Only_identified_by_site[j],"+") == 0 || cmpstr(ReverseW[j],"+") == 0)
-				for(k = 0; k < nWaves; k += 1)
-					DeletePoints j,1,$(StringFromList(k,newList))
-				endfor
-			elseif(strlen(Gene_Names[j]) == 0 && strlen(Protein_names[j]) == 0)
 				for(k = 0; k < nWaves; k += 1)
 					DeletePoints j,1,$(StringFromList(k,newList))
 				endfor
@@ -419,7 +451,7 @@ End
 
 Function TableInterestingValues()
 	WAVE colorWave, allTWave, ratioWave, ratioWave_log2
-	WAVE/T SHORTNAME, NAME // names of proteins hardcoded here
+	WAVE/T SHORTNAME, NAME, PID // names of proteins hardcoded here
 	Duplicate/O allTWave, allTWave_log10
 	allTWave_log10 = -log(allTWave[p])
 	// manhattan distance 
@@ -430,13 +462,14 @@ Function TableInterestingValues()
 	Duplicate/O colorWave, so_colorWave
 	Duplicate/O NAME, so_NAME
 	Duplicate/O SHORTNAME, so_SHORTNAME
+	Duplicate/O PID, so_PID
 	
 	Make/O/N=(numpnts(ratioWave)) keyW=p
 	Duplicate/O keyW,so_keyW
 	
-	Sort/R {so_colorWave,so_productWave}, so_allTWave, so_ratioWave, so_productWave, so_colorWave, so_NAME, so_SHORTNAME, so_keyW
+	Sort/R {so_colorWave,so_productWave}, so_allTWave, so_ratioWave, so_productWave, so_colorWave, so_NAME, so_SHORTNAME, so_PID, so_keyW
 	KillWindow/Z rankTable
-	Edit/N=rankTable/W=(432,45,942,734) so_NAME, so_SHORTNAME, so_productWave, so_colorWave, so_allTWave, so_ratioWave, so_keyW
+	Edit/N=rankTable/W=(432,45,942,734) so_NAME, so_SHORTNAME, so_PID, so_productWave, so_colorWave, so_allTWave, so_ratioWave, so_keyW
 End
 
 Function AddSignificantHitsToVolcano(vpOpt)
@@ -672,7 +705,7 @@ End
 Function SaveTheTable()
 	WAVE/Z/T volcanoLabelWave
 	String fileName = "rankTable_" + volcanoLabelWave[0] + "vs" + volcanoLabelWave[1] + ".txt"
-	Save/B/J/M="\n"/P=DiskFolder/W "so_NAME;so_SHORTNAME;so_productWave;so_colorWave;so_allTWave;so_ratioWave;so_keyW;" as fileName
+	Save/B/J/M="\n"/P=DiskFolder/W "so_NAME;so_SHORTNAME;so_PID;so_productWave;so_colorWave;so_allTWave;so_ratioWave;so_keyW;" as fileName
 End
 
 
@@ -926,7 +959,7 @@ Function ConsolidateData()
 			continue
 		endif
 		SetDataFolder $("root:data:exp_" + num2str(i))
-		WAVE/Z SHORTNAME, NAME
+		WAVE/Z/T SHORTNAME, NAME, PID
 		// rename SHORTNAME with aliases from prefixwave
 		RenameShortname(SHORTNAME, volcanoPrefixWave[0]) // only first alias list processed for now
 		// test
@@ -936,7 +969,7 @@ Function ConsolidateData()
 		wList1 = WaveList(vTCWave[counter][1] + "*",";","")
 		Concatenate/O wList1, allCond2
 		// consolidate -- this deals with multiple entries (which must be vanquished before aligning all data)
-		ConsolidateLFQs(SHORTNAME,NAME,allCond1,allCond2)
+		ConsolidateLFQs(SHORTNAME,NAME,PID,allCond1,allCond2)
 		// Imputation (done per expt)
 		TransformImputeBaseVal(allCond1)
 		TransformImputeBaseVal(allCond2)
@@ -963,21 +996,23 @@ Function MergeTheData()
 		wlist += "root:data:exp_" + num2str(i) + ":SHORTNAME;"
 	endfor
 	
-	// make a long version of SHORTNAME and NAME in root with all values
+	// make a long version of SHORTNAME, NAME and PID in root with all values
 	Concatenate/O/NP=0/T wList, longSHORTNAME
 	Concatenate/O/NP=0/T ReplaceString("SHORT",wList,""), longNAME
+	Concatenate/O/NP=0/T ReplaceString("SHORTNAME",wList,"PID"), longPID
 	// get a list of unique SHORTNAMEs
 	FindDuplicates/RT=SHORTNAME longSHORTNAME
 	// now make a corresponding textwave of NAMEs
 	Variable nRow = numpnts(SHORTNAME)
-	Make/O/N=(nRow)/T NAME
+	Make/O/N=(nRow)/T NAME, PID
 	
 	for(i = 0; i < nRow; i += 1)
 		FindValue/TEXT=(SHORTNAME[i])/TXOP=2 longSHORTNAME
 		NAME[i] = longNAME[V_row]
+		PID[i] = longPID[V_row]
 	endfor
 	
-	KillWaves/Z longNAME,longSHORTNAME
+	KillWaves/Z longNAME, longSHORTNAME, longPID
 	
 	// build shadow matrices for control and test for each experiment
 	// using the uSHORTNAME as key and then assemble
@@ -1473,7 +1508,7 @@ Function thunk_hook(s)
 			String targetTrace = StringByKey("TRACE", s_traceinfo) // now takes whatever trace is clicked on
  
 			if (numtype(v_pt) != 2)
-				Tag/a=LB/c/n=t1/b=1/f=0/s=3/v=1/X=5/Y=5 $targetTrace, v_pt, SHORTNAME[v_pt]
+				Tag/a=LB/c/n=t1/b=1/f=0/s=3/v=1/X=5/Y=5 $targetTrace, v_pt, StringFromList(0,SHORTNAME[v_pt])
 			else
 				Tag/n=t1/k
 			endif
@@ -1499,7 +1534,7 @@ Function filt_thunk_hook(s)
 			String targetTrace = StringByKey("TRACE", s_traceinfo) // now takes whatever trace is clicked on
  
 			if (numtype(v_pt) != 2)
-				Tag/a=LB/c/n=t1/b=1/f=0/s=3/v=1/X=5/Y=5 $targetTrace, v_pt, ft_SHORTNAME[v_pt]
+				Tag/a=LB/c/n=t1/b=1/f=0/s=3/v=1/X=5/Y=5 $targetTrace, v_pt, StringFromList(0,ft_SHORTNAME[v_pt])
 			else
 				Tag/n=t1/k
 			endif
@@ -1562,8 +1597,8 @@ End
 // the purpose of this function is to consolidate entries into one entry
 // For example, three rows called MYOF, will become 1
 // if there are no multiples, there is no action
-STATIC Function ConsolidateLFQs(tw0,tw1,m0,m1)
-	WAVE/T tw0,tw1
+STATIC Function ConsolidateLFQs(tw0,tw1,tw2,m0,m1)
+	WAVE/T tw0,tw1,tw2
 	WAVE m0,m1
 	// get list of proteins with multiple entries
 	FindDuplicates/DT=tempW tw0 // this is SHORTNAME
@@ -1571,7 +1606,11 @@ STATIC Function ConsolidateLFQs(tw0,tw1,m0,m1)
 		return -1
 	endif
 	// unique form of these multiples
-	FindDuplicates/RT=tempW2 tempW
+	if(numpnts(tempW) == 1)
+		Duplicate/O/FREE/T tempW, tempW2
+	else
+		FindDuplicates/RT=tempW2 tempW
+	endif
 	Variable nSub = numpnts(tempW2)
 	Variable nRow, nr
 	Variable nc0 = DimSize(m0,1)
@@ -1606,6 +1645,7 @@ STATIC Function ConsolidateLFQs(tw0,tw1,m0,m1)
 		// because there could be empty rows for other reasons
 		DeleteTheseCellsFrom1DTextWave(tw0,matchW)
 		DeleteTheseCellsFrom1DTextWave(tw1,matchW)
+		DeleteTheseCellsFrom1DTextWave(tw2,matchW)
 		// and from matrices
 		m0[][] = (matchW[p] == 1) ? NaN : m0[p][q]
 		MatrixOp/O/FREE zW = zapNaNs(m0)
