@@ -4,6 +4,11 @@
 #include <WaveSelectorWidget>
 #include <PopupWaveSelector>
 
+// the user can start with:
+// a single proteinGroups.txt file from MaxQuant (LFQ)
+// multiple proteinGroups.txt files from MaxQuant (LFQ) each in their own folder in a single folder
+// some waves already loaded into Igor
+
 ////////////////////////////////////////////////////////////////////////
 // Menu items
 ////////////////////////////////////////////////////////////////////////
@@ -12,11 +17,12 @@ Menu "Macros"
 		"Load MaxQuant Data...", /Q, LoadMaxQuantData()
 		"Load Multiple MaxQuant...", /Q, LoadMultiMaxQuantData()
 		SubMenu "Tools"
-			"Volcano Plot...", /Q, VolcanoIO_Panel()
+			"Volcano Plot...", /Q, VolcanoIO_Panel() // use this option if waves already loaded
 //			"PCA Only...", /Q, MakePCAWaveSelectorPanel() // hide this option
 			"Label Top 10", /Q, LabelTopTenWorkflow()
 			"Save Layout", /Q, SaveTheLayout()
 			"Save Table", /Q, SaveTheTable()
+			"Save for ProteoRE", /Q, SaveForProteore()
 		end
 		SubMenu "Subcellular analysis"
 			"Make List to Retrieve Uniprot Data", /Q, UniprotTable()
@@ -164,7 +170,7 @@ End
 
 Function LoadMaxQuantFiles()
 	// find folder containing the subfolders
-	NewPath/O/Q/M="Please find disk folder" diskFolder
+	NewPath/O/Q/M="Please find the folder containing subfolders" diskFolder
 	if (V_flag != 0)
 		DoAlert 0, "Disk folder error"
 		return -1
@@ -708,6 +714,66 @@ Function SaveTheTable()
 	Save/B/J/M="\n"/P=DiskFolder/W "so_NAME;so_SHORTNAME;so_PID;so_productWave;so_colorWave;so_allTWave;so_ratioWave;so_keyW;" as fileName
 End
 
+Function SaveForProteore()
+	WAVE/Z/T volcanoLabelWave
+	String fileName
+	
+	WAVE/Z/T so_SHORTNAME,so_NAME,so_PID
+	WAVE/Z so_colorWAVE
+	
+	// any semi-colon separated lists must be quoted
+	Duplicate/O/T so_SHORTNAME, proteore1
+	Duplicate/O/T so_NAME, proteore2
+	Duplicate/O/T so_PID, proteore3
+	
+	String wList = WaveList("proteore*",";","")
+	Variable nWaves = ItemsInList(wList)
+	Variable i
+	
+	for(i = 0; i < nWaves; i += 1)
+		Wave/T tw = $(StringFromList(i, wList))
+		tw[] = SelectString(ItemsInList(tw[p]) < 2, "\"" + tw[p] + "\"", tw[p])
+	endfor
+	
+	// make "cluster wave"
+	Make/O/N=(numpnts(so_colorWave))/T proteore4
+	Wave/T proteore4
+	proteore4[] = SelectString(so_colorWave[p] == 3, "below", "enriched")
+	// save file
+	fileName = "rankTable_" + volcanoLabelWave[0] + "vs" + volcanoLabelWave[1] + "all.txt"
+	Save/O/B/J/M="\n"/P=DiskFolder "proteore1;proteore2;proteore3;proteore4;" as fileName
+	
+	// now export a list of only the enriched ones
+	WaveStats/Q so_colorWave
+	if(V_Max < 3)
+		Print "No enrichment, so no text file saved."
+		return 0
+	endif
+	FindLevel/P/Q so_colorWave, 2
+	if(V_flag == 1)
+		FindLevel/P/Q so_colorWave, 1
+		if(V_flag == 1)
+			FindLevel/P/Q so_colorWave, 0
+		endif
+	endif
+	
+	Duplicate/O/T/RMD=[0,V_levelX - 1] proteore1,proteore5
+	Duplicate/O/T/RMD=[0,V_levelX - 1] proteore2,proteore6
+	Duplicate/O/T/RMD=[0,V_levelX - 1] proteore3,proteore7
+	Duplicate/O/T/RMD=[0,V_levelX - 1] proteore4,proteore8
+	
+	fileName = "rankTable_" + volcanoLabelWave[0] + "vs" + volcanoLabelWave[1] + "enriched.txt"
+	Save/O/B/J/M="\n"/P=DiskFolder "proteore5;proteore6;proteore7;proteore8;" as fileName
+	
+	// tidy up
+	wList = WaveList("proteore*",";","")
+	nWaves = ItemsInList(wList)
+	
+	for(i = 0; i < nWaves; i += 1)
+		Wave/T tw = $(StringFromList(i, wList))
+		KillWaves/Z tw
+	endfor
+End
 
 // This function will load an output from UniProt.
 // Using a list of gene names from VolcanoPlot output (via copy/paste), query in UniProt ID mapping
@@ -1013,15 +1079,6 @@ Function MergeTheData()
 	endfor
 	
 	KillWaves/Z longNAME, longSHORTNAME, longPID
-	
-	// build shadow matrices for control and test for each experiment
-	// using the uSHORTNAME as key and then assemble
-	
-//	for each datafolder, find the two matrices and assess width
-//	make new matrix that has nRow and the right number of cols
-//	now, search for SHORTNAME values in the expt SHORTNAME
-//	for the hit, copy the data from matrices to the appropriate shadow matrix
-//	if value is missing, substitute NaN
 	
 	Variable nExp = ItemsInList(wList)
 	String wName, sName
