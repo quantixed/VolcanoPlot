@@ -305,6 +305,12 @@ Function PrepareForVolcano()
 	Concatenate/O/NP=1 wList1, allCond1
 	Concatenate/O/NP=1 wList2, allCond2
 	
+	// This is a comparison between two conditions in one proteinGroups file
+	// It is possible that the conditions we are comparing are part of a larger dataset
+	// If a protein has was not detected in either condition, then it should be removed
+	WAVE/T/Z SHORTNAME,NAME,PID
+	RemoveBlankLFQs(SHORTNAME,NAME,PID,allCond1,allCond2)
+	
 	// deal with baseVal
 	TransformImputeBaseVal(allCond1)
 	TransformImputeBaseVal(allCond2)
@@ -1639,6 +1645,36 @@ STATIC Function CheckForConflicts(tw)
 	return 0
 End
 
+/// @param tw0 text wave containing label data
+/// @param tw1 text wave containing label data
+/// @param tw2 text wave containing label data
+/// @param m0 2D wave containing data yet to be imputed
+/// @param m1 2D wave containing data yet to be imputed
+STATIC Function RemoveBlankLFQs(tw0,tw1,tw2,m0,m1)
+	Wave/T tw0, tw1, tw2 // "label waves"
+	Wave m0, m1 // data waves
+	WAVE/Z volcanoParamWave
+	Variable baseVal = volcanoParamWave[0]
+	// if the baseVal is nan our method won't work, so just report that and exit
+	if(numtype(baseVal) != 0)
+		Print "Base value is not numeric, skipping the check for absent proteins."
+		return 0
+	endif
+	
+	Concatenate/FREE/NP=1 {m0,m1}, bigMat
+	// find rows where all values match the baseVal
+	MatrixOp/O/FREE w1 = sumRows(bigMat) / numCols(bigMat)
+	Make/O/FREE/N=(DimSize(bigMat,0)) matchW
+	matchW[] = (w1[p] == baseVal) ? 1 : 0
+	
+	DeleteTheseCellsFrom1DTextWave(tw0,matchW)
+	DeleteTheseCellsFrom1DTextWave(tw1,matchW)
+	DeleteTheseCellsFrom1DTextWave(tw2,matchW)
+	
+	DeleteTheseRowsFrom2DWave(m0,matchW)
+	DeleteTheseRowsFrom2DWave(m1,matchW)
+End
+
 STATIC Function RenameShortname(tw,str)
 	WAVE/T tw
 	String str
@@ -1728,6 +1764,18 @@ STATIC Function DeleteTheseCellsFrom1DTextWave(w,delw)
 	for(i = nRow - 1; i >= 0; i -= 1)
 		if(delW[i] == 1)
 			DeletePoints i,1,w
+		endif
+	endfor
+End
+
+STATIC Function DeleteTheseRowsFrom2DWave(w,delw)
+	Wave w
+	Wave delW
+	Variable i, nRow = numpnts(delw)
+	
+	for(i = nRow - 1; i >= 0; i -= 1)
+		if(delW[i] == 1)
+			DeletePoints/M=0 i,1,w
 		endif
 	endfor
 End
