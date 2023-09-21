@@ -152,15 +152,29 @@ Function LoadMaxQuantFile()
 		endif
 	endfor
 	
-	// remove data where there is
+	// we nned to remove data where there is
 	// a "+" in Potential_contaminant, Only_identified_by_site, or ReverseW
+	// it is possible though that if there are no + in one of these columns, the wave will be numeric
 	nWaves = ItemsInList(newList)
 	
 	for(i = nRow - 1; i >= 0; i -= 1)
-		if(cmpstr(Potential_contaminant[i],"+") == 0 || cmpstr(Only_identified_by_site[i],"+") == 0 || cmpstr(ReverseW[i],"+") == 0)
+		if(WaveType(Potential_contaminant,1) == 2 && cmpstr(Potential_contaminant[i],"+") == 0)
 			for(j = 0; j < nWaves; j += 1)
 				DeletePoints i,1,$(StringFromList(j,newList))
 			endfor
+			continue
+		endif
+		if(WaveType(Only_identified_by_site,1) == 2 && cmpstr(Only_identified_by_site[i],"+") == 0)
+			for(j = 0; j < nWaves; j += 1)
+				DeletePoints i,1,$(StringFromList(j,newList))
+			endfor
+			continue
+		endif
+		if(WaveType(ReverseW,1) == 2 && cmpstr(ReverseW[i],"+") == 0)
+			for(j = 0; j < nWaves; j += 1)
+				DeletePoints i,1,$(StringFromList(j,newList))
+			endfor
+			continue
 		endif
 	endfor
 	
