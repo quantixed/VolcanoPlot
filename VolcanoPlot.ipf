@@ -12,23 +12,21 @@
 ////////////////////////////////////////////////////////////////////////
 // Menu items
 ////////////////////////////////////////////////////////////////////////
-Menu "Macros"
-	SubMenu "Proteomics"
-		"Load MaxQuant Data...", /Q, LoadMaxQuantData()
-		"Load Multiple MaxQuant...", /Q, LoadMultiMaxQuantData()
-		SubMenu "Tools"
-			"Volcano Plot...", /Q, VolcanoIO_Panel() // use this option if waves already loaded
-//			"PCA Only...", /Q, MakePCAWaveSelectorPanel() // hide this option
-			"Label Top 10", /Q, LabelTopTenWorkflow()
-			"Save Layout", /Q, SaveTheLayout()
-			"Save Table", /Q, SaveTheTable()
-//			"Save for ProteoRE", /Q, SaveForProteore()
-		end
-		SubMenu "Subcellular analysis"
-			"Make List to Retrieve Uniprot Data", /Q, UniprotTable()
-			"Load and Match UniProt Data...", /Q, UniprotWrapper()
-			"Filter for GO Term(s)", /Q, GOTerm_Panel()
-		end
+Menu "Proteomics"
+	"Load MaxQuant Data...", /Q, LoadMaxQuantData()
+	"Load Multiple MaxQuant...", /Q, LoadMultiMaxQuantData()
+	SubMenu "Tools"
+		"Volcano Plot...", /Q, VolcanoIO_Panel() // use this option if waves already loaded
+//		"PCA Only...", /Q, MakePCAWaveSelectorPanel() // hide this option
+		"Label Top 10", /Q, LabelTopTenWorkflow()
+		"Save Layout", /Q, SaveTheLayout()
+		"Save Table", /Q, SaveTheTable()
+//		"Save for ProteoRE", /Q, SaveForProteore()
+	end
+	SubMenu "Subcellular analysis"
+		"Make List to Retrieve Uniprot Data", /Q, UniprotTable()
+		"Load and Match UniProt Data...", /Q, UniprotWrapper()
+		"Filter for GO Term(s)", /Q, GOTerm_Panel()
 	end
 End
 

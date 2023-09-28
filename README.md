@@ -20,9 +20,12 @@ If you have several `proteinGroups.txt` files, it is possible to analyse them to
 Due to potential differences in LFQ values between files, the default is to display the mean of ratios rather than the ratio of means.
 Paired T-test is the default test, otherwise this option will give equivalent outputs as for a single file.
 
+For both types of analysis it there is an option to give Perseus style processing.
+When this option is checking the difference is calculated by subtraction using log2 transformed LFQ data, rather than a ratio of the linear data.
+
 ## Manual analysis
 
-Analysis can also be started manually from the Macros menu.
+Analysis can also be started manually from the Proteomics menu.
 In this case, supply data (intensity, LFQ_Intensty or peptides) for the conditions you want to analyse (with logical naming) and also the protein names. These need to be in TextWaves with names `NAME` and `SHORTNAME`.
 
 Minimum data to run (all in `root:`):
@@ -39,11 +42,15 @@ Transforms and imputation are done exactly as described for the default settings
 
 ## Secondary analysis
 
+<details>
+	<summary>An option for using Gene Ontology terms to filter the data is included...</summary>
+
+
 ### Subcellular analysis
 
 Once the data has been processed, you can do further (subcellular) analysis. For example, you may want to only view the hits that are associated with a certain GO Term or group of GO Terms. This is possible but involves some manual steps.
 
-Select _Macros > Proteomics > Subcellular Analysis > Make List to Retrieve Uniprot Data_
+Select _Proteomics > Subcellular Analysis > Make List to Retrieve Uniprot Data_
 
 Follow the instructions and paste the data into Uniprot's [ID mapping tool](https://www.uniprot.org/uploadlists). Select the appropriate species as shown, and submit.
 
@@ -71,11 +78,13 @@ Select tab-separated file and Uncompressed.
 
 <img src="img/uniprot07.png" width="300">
 
-Now, back in Igor select _Macros > Proteomics > Subcellular Analysis > Load and Match Uniprot Data..._
+Now, back in Igor select _Proteomics > Subcellular Analysis > Load and Match Uniprot Data..._
 
 Find the file that you downloaded from Uniprot. Igor will now present you with a list of all the GO Terms that Uniprot found from your hits. Select using cmd-click (on a Mac) and then click _Filter_. Shift-click will select contiguous rows. You can reset the selection by clicking the button or by simply click-selecting one new row.
 
-After clicking _Filter_, a new Volcano Plot will be generated together with a table to show you the hits that matched the GO terms you selected. If you want to change your selection, there is no need to reload just select _Macros > Proteomics > Subcellular Analysis > Filter for GO Term(s)_ 
+After clicking _Filter_, a new Volcano Plot will be generated together with a table to show you the hits that matched the GO terms you selected. If you want to change your selection, there is no need to reload just select _Proteomics > Subcellular Analysis > Filter for GO Term(s)_ 
+
+</details>
 
 ## Further notes
 
