@@ -22,7 +22,7 @@ Menu "Macros"
 			"Label Top 10", /Q, LabelTopTenWorkflow()
 			"Save Layout", /Q, SaveTheLayout()
 			"Save Table", /Q, SaveTheTable()
-			"Save for ProteoRE", /Q, SaveForProteore()
+//			"Save for ProteoRE", /Q, SaveForProteore()
 		end
 		SubMenu "Subcellular analysis"
 			"Make List to Retrieve Uniprot Data", /Q, UniprotTable()
@@ -152,7 +152,7 @@ Function LoadMaxQuantFile()
 		endif
 	endfor
 	
-	// we nned to remove data where there is
+	// we need to remove data where there is
 	// a "+" in Potential_contaminant, Only_identified_by_site, or ReverseW
 	// it is possible though that if there are no + in one of these columns, the wave will be numeric
 	nWaves = ItemsInList(newList)
@@ -367,8 +367,8 @@ Function MakeVolcano()
 	endfor
 	
 	// make mean waves - these need transformation back
-	allCond1[][] = 10^(allCond1[p][q])
-	allCond2[][] = 10^(allCond2[p][q])
+	allCond1[][] = 2^(allCond1[p][q])
+	allCond2[][] = 2^(allCond2[p][q])
 	
 	if(meanOpt == 1 && DimSize(allCond1,1) != DimSize(allCond2,1))
 		Print "Unequal replicates in test and control. Ratios v Ratios not possible."
@@ -429,8 +429,8 @@ STATIC Function TransformImputeBaseVal(m0)
 	else
 		m1[][] = (m1[p][q] == baseVal) ? NaN : m1[p][q]
 	endif
-	// log transform
-	m1[][] = log(m1[p][q])
+	// log2 transform
+	m1[][] = log(m1[p][q]) / log(2)
 	
 	Variable nCols = dimsize(m1,1)
 	Variable meanVar,sdVar
@@ -438,18 +438,19 @@ STATIC Function TransformImputeBaseVal(m0)
 	
 	for(i = 0; i < nCols; i += 1)
 		MatrixOp/O/FREE tempW = col(m1,i)
-		WaveTransform zapnans tempW
+		WaveTransform zapnans tempW // valid values
 		sdVar = sqrt(variance(tempW))
-		meanVar = mean(tempW) - (sdVar * 1.8)
+		meanVar = mean(tempW) - (sdVar * downShift)
 		sdVar = sdVar * width
 		// add noise to base values in m0 and log transform real values col by col
 		if(numtype(baseVal) == 2)
 			// deal with NaN
-			m0[][i] = (numtype(m0[p][i]) == 2) ? meanVar + gnoise(sdVar) : log(m0[p][i])
+			m0[][i] = (numtype(m0[p][i]) == 2) ? meanVar + gnoise(sdVar) : m1[p][i]
 		else
-			m0[][i] = (m0[p][i] == baseVal) ? meanVar + gnoise(sdVar) : log(m0[p][i])
+			m0[][i] = (m0[p][i] == baseVal) ? meanVar + gnoise(sdVar) : m1[p][i]
 		endif
 	endfor
+	// at the end of this function m0 is a log2 tranform of the input
 End
 
 Function MakeVPlot()
