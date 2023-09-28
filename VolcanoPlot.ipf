@@ -12,23 +12,21 @@
 ////////////////////////////////////////////////////////////////////////
 // Menu items
 ////////////////////////////////////////////////////////////////////////
-Menu "Macros"
-	SubMenu "Proteomics"
-		"Load MaxQuant Data...", /Q, LoadMaxQuantData()
-		"Load Multiple MaxQuant...", /Q, LoadMultiMaxQuantData()
-		SubMenu "Tools"
-			"Volcano Plot...", /Q, VolcanoIO_Panel() // use this option if waves already loaded
-//			"PCA Only...", /Q, MakePCAWaveSelectorPanel() // hide this option
-			"Label Top 10", /Q, LabelTopTenWorkflow()
-			"Save Layout", /Q, SaveTheLayout()
-			"Save Table", /Q, SaveTheTable()
-			"Save for ProteoRE", /Q, SaveForProteore()
-		end
-		SubMenu "Subcellular analysis"
-			"Make List to Retrieve Uniprot Data", /Q, UniprotTable()
-			"Load and Match UniProt Data...", /Q, UniprotWrapper()
-			"Filter for GO Term(s)", /Q, GOTerm_Panel()
-		end
+Menu "Proteomics"
+	"Load MaxQuant Data...", /Q, LoadMaxQuantData()
+	"Load Multiple MaxQuant...", /Q, LoadMultiMaxQuantData()
+	SubMenu "Tools"
+		"Volcano Plot...", /Q, VolcanoIO_Panel() // use this option if waves already loaded
+//		"PCA Only...", /Q, MakePCAWaveSelectorPanel() // hide this option
+		"Label Top 10", /Q, LabelTopTenWorkflow()
+		"Save Layout", /Q, SaveTheLayout()
+		"Save Table", /Q, SaveTheTable()
+//		"Save for ProteoRE", /Q, SaveForProteore()
+	end
+	SubMenu "Subcellular analysis"
+		"Make List to Retrieve Uniprot Data", /Q, UniprotTable()
+		"Load and Match UniProt Data...", /Q, UniprotWrapper()
+		"Filter for GO Term(s)", /Q, GOTerm_Panel()
 	end
 End
 
@@ -152,7 +150,7 @@ Function LoadMaxQuantFile()
 		endif
 	endfor
 	
-	// we nned to remove data where there is
+	// we need to remove data where there is
 	// a "+" in Potential_contaminant, Only_identified_by_site, or ReverseW
 	// it is possible though that if there are no + in one of these columns, the wave will be numeric
 	nWaves = ItemsInList(newList)
@@ -332,13 +330,15 @@ End
 
 // This function drives the whole program
 Function MakeVolcano()
+	// as we come in we have two matrices for the conditions - data is Log2 transformed
 	WAVE/Z volcanoParamWave, allCond1, allCond2
 	
 	Variable pairOpt = volcanoParamWave[1] // 1 is paired, 0 is not
 	Variable foldChange = log(abs(volcanoParamWave[3])) / log(2) // log2 value for threshold i.e. 1 is 2-fold change
 	Variable meanOpt = volcanoParamWave[6] // 1 is ratios v ratios, 0 is mean v mean
+	Variable perseusOpt = volcanoParamWave[7] // 1 is perseus style (difference), 0 is previous method
 	
-	// at this point we have the consolidated merged data it is log transformed (following imputation)
+	// at this point we have the consolidated merged data it is log2 transformed (following imputation)
 	Variable pVar
 	Variable nProt = DimSize(allCond1,0)
 	Make/O/N=(nProt) allTWave, colorWave=0
@@ -353,7 +353,8 @@ Function MakeVolcano()
 		MatrixOp/O/FREE w1 = row(allCond2,i) ^ t
 		WaveTransform zapnans w1
 		if(pairOpt == 0)
-			StatsTTest/Q/Z w0,w1
+			// we assume equal variance
+			StatsTTest/TAIL=4/DFM=2/Q/Z w0,w1
 		else
 			StatsTTest/Q/Z/PAIR w0,w1
 		endif
@@ -366,43 +367,81 @@ Function MakeVolcano()
 		allTWave[i] = pVar
 	endfor
 	
-	// make mean waves - these need transformation back
-	allCond1[][] = 10^(allCond1[p][q])
-	allCond2[][] = 10^(allCond2[p][q])
-	
-	if(meanOpt == 1 && DimSize(allCond1,1) != DimSize(allCond2,1))
+	// check that replicates are equal, if Ratios v Ratios is selected this is a requirement. Reset Opt if not
+	if(meanOpt == 1 && (DimSize(allCond1,1) != DimSize(allCond2,1)))
 		Print "Unequal replicates in test and control. Ratios v Ratios not possible."
 		meanOpt = 0
+		volcanoParamWave[6] = meanOpt
 	endif
 	
-	// because of potential NaNs we need a few extra steps
-	Duplicate/O/FREE allCond1, sumMat
-	sumMat[][] = (numtype(allCond1) == 2) ? 0 : 1 
-	MatrixOp/O meanCond1 = sumrows(replaceNaNs(allCond1,0)) / sumrows(sumMat)
-	Duplicate/O/FREE allCond2, sumMat
-	sumMat[][] = (numtype(allCond2) == 2) ? 0 : 1 
-	MatrixOp/O meanCond2 = sumrows(replaceNaNs(allCond2,0)) / sumrows(sumMat)
-	
-	// if we are doing mean vs mean
-	if(meanOpt == 0)
-		// ratio wave
-		MatrixOp/O ratioWave = meanCond1 / meanCond2
+	// here we diverge if we are doing perseus style or not
+	if(perseusOpt == 0)	
+		// make mean waves - these need transformation back
+		allCond1[][] = 2^(allCond1[p][q])
+		allCond2[][] = 2^(allCond2[p][q])
+		
+		// because of potential NaNs we need a few extra steps
+		Duplicate/O/FREE allCond1, sumMat
+		sumMat[][] = (numtype(allCond1) == 2) ? 0 : 1 
+		MatrixOp/O meanCond1 = sumrows(replaceNaNs(allCond1,0)) / sumrows(sumMat)
+		Duplicate/O/FREE allCond2, sumMat
+		sumMat[][] = (numtype(allCond2) == 2) ? 0 : 1 
+		MatrixOp/O meanCond2 = sumrows(replaceNaNs(allCond2,0)) / sumrows(sumMat)
+		
+		// if we are doing mean vs mean
+		if(meanOpt == 0)
+			// ratio wave
+			MatrixOp/O ratioWave = meanCond1 / meanCond2
+		else
+			// otherwise we will compare ratio vs ratio
+			MatrixOp/O/FREE ratioMat = allCond1 / allCond2
+			Duplicate/O/FREE ratioMat, sumMat
+			sumMat[][] = (numtype(ratioMat) == 2) ? 0 : 1 
+			// ratio wave
+			MatrixOp/O ratioWave = sumrows(replaceNaNs(ratioMat,0)) / sumrows(sumMat)
+			// note that I tried an alternative way to calc meanCond1/2 and it was no better
+		endif
+		// ratios need converting to Log2 for volcanoPlot
+		Duplicate/O ratioWave,ratioWave_log2
+		ratioWave_log2[] = log(abs(ratioWave[p])) / log(2)
 	else
-		// otherwise we will compare ratio vs ratio
-		MatrixOp/O/FREE ratioMat = allCond1 / allCond2
-		Duplicate/O/FREE ratioMat, sumMat
-		sumMat[][] = (numtype(ratioMat) == 2) ? 0 : 1 
-		// ratio wave
-		MatrixOp/O ratioWave = sumrows(replaceNaNs(ratioMat,0)) / sumrows(sumMat)
-		// note that I tried an alternative way to calc meanCond1/2 and it was no better
+		// because of potential NaNs we need a few extra steps
+		Duplicate/O/FREE allCond1, sumMat
+		sumMat[][] = (numtype(allCond1) == 2) ? 0 : 1 
+		MatrixOp/O meanCond1 = sumrows(replaceNaNs(allCond1,0)) / sumrows(sumMat)
+		Duplicate/O/FREE allCond2, sumMat
+		sumMat[][] = (numtype(allCond2) == 2) ? 0 : 1 
+		MatrixOp/O meanCond2 = sumrows(replaceNaNs(allCond2,0)) / sumrows(sumMat)
+		// we will leave these meanCond* waves in log2 space
+		
+		// if we are doing mean vs mean
+		if(meanOpt == 0)
+			// DIFFERENCE wave - persesus style
+			MatrixOp/O ratioWave = meanCond1 - meanCond2
+		else
+			// otherwise we will compare ratio vs ratio
+			MatrixOp/O/FREE ratioMat = allCond1 - allCond2
+			Duplicate/O/FREE ratioMat, sumMat
+			sumMat[][] = (numtype(ratioMat) == 2) ? 0 : 1 
+			// ratio wave
+			MatrixOp/O ratioWave = sumrows(replaceNaNs(ratioMat,0)) / sumrows(sumMat)
+			// note that I tried an alternative way to calc meanCond1/2 and it was no better
+		endif
+		// differences are in log2 so we need to copy them to the appropriate wave for volcanoPlot
+		Duplicate/O ratioWave,ratioWave_log2
+		// and then transform ratioWave back to linear
+		ratioWave[] = 2^(ratioWave_log2[p])
+		// transformation back to log2 for consistency with non-perseus approach
+		allCond1[][] = 2^(allCond1[p][q])
+		allCond2[][] = 2^(allCond2[p][q])
 	endif
-	// ratios need converting to Log2 for volcanoPlot
-	Duplicate/O ratioWave,ratioWave_log2
-	ratioWave_log2[] = log(abs(ratioWave[p])) / log(2)
+	
 	// assign colors
 	colorWave[] = (ratioWave_log2[p] >= foldChange && abs(allTwave[p] <= 0.05)) ? 3 : colorWave[p]
 	colorWave[] = (ratioWave_log2[p] <= -foldChange && abs(allTwave[p] <= 0.05)) ? 2 : colorWave[p]
 	colorWave[] = (ratioWave_log2[p] >= foldChange && abs(allTwave[p] > 0.05)) ? 1 : colorWave[p]
+	
+	// at the exit allCond1 and allCond2 are linear (for plotting on scatter plot)
 End
 
 /// @param m0 2D wave containing data to be imputed
@@ -429,8 +468,8 @@ STATIC Function TransformImputeBaseVal(m0)
 	else
 		m1[][] = (m1[p][q] == baseVal) ? NaN : m1[p][q]
 	endif
-	// log transform
-	m1[][] = log(m1[p][q])
+	// log2 transform
+	m1[][] = log(m1[p][q]) / log(2)
 	
 	Variable nCols = dimsize(m1,1)
 	Variable meanVar,sdVar
@@ -438,22 +477,23 @@ STATIC Function TransformImputeBaseVal(m0)
 	
 	for(i = 0; i < nCols; i += 1)
 		MatrixOp/O/FREE tempW = col(m1,i)
-		WaveTransform zapnans tempW
+		WaveTransform zapnans tempW // valid values
 		sdVar = sqrt(variance(tempW))
-		meanVar = mean(tempW) - (sdVar * 1.8)
+		meanVar = mean(tempW) - (sdVar * downShift)
 		sdVar = sdVar * width
 		// add noise to base values in m0 and log transform real values col by col
 		if(numtype(baseVal) == 2)
 			// deal with NaN
-			m0[][i] = (numtype(m0[p][i]) == 2) ? meanVar + gnoise(sdVar) : log(m0[p][i])
+			m0[][i] = (numtype(m0[p][i]) == 2) ? meanVar + gnoise(sdVar) : m1[p][i]
 		else
-			m0[][i] = (m0[p][i] == baseVal) ? meanVar + gnoise(sdVar) : log(m0[p][i])
+			m0[][i] = (m0[p][i] == baseVal) ? meanVar + gnoise(sdVar) : m1[p][i]
 		endif
 	endfor
+	// at the end of this function m0 is a log2 tranform of the input
 End
 
 Function MakeVPlot()
-	WAVE/Z allTWave,ratioWave_log2,colorWave,colorTableWave
+	WAVE/Z allTWave,ratioWave_log2,colorWave,colorTableWave,volcanoParamWave
 	WAVE/Z/T volcanoLabelWave
 	KillWindow/Z volcanoPlot
 	Display/N=volcanoPlot/W=(35,45,430,734) allTWave vs ratioWave_log2
@@ -470,7 +510,12 @@ Function MakeVPlot()
 	DrawLine/W=volcanoPlot 0,1,0,minPVar
 	ModifyGraph/W=VolcanoPlot zColor(allTWave)={colorWave,0,3,cindexRGB,0,colorTableWave}
 	Label/W=VolcanoPlot left "P-Value"
-	String labelStr = volcanoLabelWave[0] + " / " + volcanoLabelWave[1] + " (Log\\B2\\M)"
+	String labelStr
+	if(volcanoParamWave[7] == 0)
+		labelStr = volcanoLabelWave[0] + " / " + volcanoLabelWave[1] + " (Log\\B2\\M)"
+	else
+		labelStr = "Difference (" + volcanoLabelWave[0] + " - " + volcanoLabelWave[1] + ")"
+	endif
 	Label/W=VolcanoPlot bottom labelStr
 	SetWindow VolcanoPlot, hook(modified)=thunk_hook
 End
@@ -536,7 +581,7 @@ End
 
 Function MakeMeanComparison()
 	KillWindow/Z meanPlot
-	WAVE/Z meanCond1,meanCond2,colorWave,colorTableWave
+	WAVE/Z meanCond1,meanCond2,colorWave,colorTableWave, volcanoParamWave
 	WAVE/Z/T volcanoLabelWave
 	if(!WaveExists(meanCond1) || !WaveExists(meanCond2))
 		Print "Error: no mean waves."
@@ -546,11 +591,16 @@ Function MakeMeanComparison()
 	Display/N=meanPlot/W=(944,45,1340,401) meanCond1 vs meanCond2
 	Variable maxVar = max(wavemax(meanCond1),wavemax(meanCond2))
 	Variable minVar = min(wavemin(meanCond1),wavemin(meanCond2))
+	if(volcanoParamWave[7] == 0)
 		maxVar = 10 ^ (ceil((log(maxVar))))
 		minVar = 10 ^ (floor((log(minVar)))) // if any Nans will this fail?
+		ModifyGraph/W=meanPlot log=1
+	else
+		maxVar = ceil(maxVar)
+		minVar = floor(minVar)
+	endif
 	SetAxis/W=meanPlot left minVar,maxVar
 	SetAxis/W=meanPlot bottom minVar,maxVar
-	ModifyGraph/W=meanPlot log=1
 	ModifyGraph/W=meanPlot width={Plan,1,bottom,left}
 	ModifyGraph/W=meanPlot mode=3,marker=19
 	ModifyGraph/W=meanPlot zColor(meanCond1)={colorWave,0,3,cindexRGB,0,colorTableWave}
@@ -1143,7 +1193,7 @@ Function VolcanoIO_Panel()
 	if(!WaveExists(volcanoPrefixWave))
 		Make/O/N=(2)/T volcanoPrefixWave = {"prefix1*","prefix2*"}
 		Make/O/N=(2)/T volcanoLabelWave = {"Test","Control"}
-		Make/O/N=(7) volcanoParamWave = {0,0,1,2,1,2,0}
+		Make/O/N=(8) volcanoParamWave = {0,0,1,2,1,2,0,0}
 	endif
 	// they are called prefix but suffix (or any wildcard search string is fine)
 	String prefix1 = volcanoPrefixWave[0]
@@ -1158,6 +1208,7 @@ Function VolcanoIO_Panel()
 	Variable seed1 = volcanoParamWave[4]
 	Variable seed2 = volcanoParamWave[5]
 	Variable meanOpt = volcanoParamWave[6]
+	Variable perseusOpt = volcanoParamWave[7]
 	
 	DoWindow/K VolcanoSetup
 	NewPanel/N=VolcanoSetup/K=1/W=(81,73,774,240)
@@ -1169,8 +1220,9 @@ Function VolcanoIO_Panel()
 	SetVariable box4,pos={298,54},size={200,16},title="Label for condition 2:",value=_STR:label2
 	SetVariable box5,pos={20,115},size={250,16},title="What value represents absent proteins?",format="%g",value=_NUM:baseVal
 	SetVariable box6,pos={20,134},size={250,16},title="Fold-change (2 is twofold)?",format="%g",value=_NUM:foldChange
-	CheckBox box11,pos={298,131},size={20,20},title="Ratios v Ratios?",value=meanOpt,mode=0
-	CheckBox box7,pos={298,116},size={20,20},title="Analyse paired data?",value=pairOpt,mode=0
+	CheckBox box11,pos={298,116},size={20,20},title="Ratios v Ratios?",value=meanOpt,mode=0
+	CheckBox box12,pos={298,131},size={20,20},title="Perseus style?",value=perseusOpt,mode=0
+	CheckBox box7,pos={298,101},size={20,20},title="Analyse paired data?",value=pairOpt,mode=0
 	CheckBox box8,pos={528,92},size={20,20},title="Reproducibly random?",value=seedOpt,mode=0
 	TitleBox tb2,pos={528,13},size={115,20},title="Imputation:",fstyle=1,fsize=11,labelBack=(55000,55000,65000),frame=0
 	SetVariable box9,pos={528,33},size={150,16},title="Seed for condition 1:",format="%g",value=_NUM:seed1
@@ -1206,14 +1258,24 @@ Function ButtonProc(ba) : ButtonControl
 	Variable seed2 = V_Value
 	ControlInfo/W=$ba.win box11
 	Variable meanOpt = V_Value
+	ControlInfo/W=$ba.win box12
+	Variable perseusOpt = V_Value
 	
 	Print "Test group:", prefix1, "Labelled", label1, "\rControl group:", prefix2, "Labelled", label2
 	Print "Value for imputation:", baseVal, "\rFold-change:", foldChange
+	if(meanOpt == 1)
+				Print "Volcano plot shows ratios v ratios not mean v mean"
+	endif
 	if(pairOpt == 1)
 		Print "Using paired data."
 	endif
 	if(seedOpt == 1)
 		Print "Using RNG seeds:", label1, "=", seed1, "&", label2, "=", seed2
+	else
+		Print "No RNG seed specified"
+	endif
+	if(perseusOpt == 1)
+		Print "Comparisons using Perseus style processing (log2 transformed data rather than linear)."
 	endif
 	WAVE/Z/T 	volcanoPrefixWave, volcanoLabelWave
 	volcanoPrefixWave[0] = prefix1
@@ -1228,6 +1290,7 @@ Function ButtonProc(ba) : ButtonControl
 	volcanoParamWave[4] = seed1
 	volcanoParamWave[5] = seed2
 	volcanoParamWave[6] = meanOpt
+	volcanoParamWave[7] = perseusOpt
 	
 	KillWindow/Z $(ba.win)
 	VolcanoWorkflowWrapper(0)
@@ -1396,7 +1459,7 @@ Function MakeCondSelectorPanel()
 	if(!WaveExists(volcanoPrefixWave))
 		Make/O/N=(2)/T volcanoPrefixWave = {"gene1;altname1;altname2",""}
 		Make/O/N=(2)/T volcanoLabelWave = {"Test","Control"}
-		Make/O/N=(7) volcanoParamWave = {0,1,1,2,1,2,1}
+		Make/O/N=(8) volcanoParamWave = {0,1,1,2,1,2,1,0}
 	endif
 	
 	String prefix1 = volcanoPrefixWave[0]
@@ -1411,6 +1474,7 @@ Function MakeCondSelectorPanel()
 	Variable seed1 = volcanoParamWave[4]
 	Variable seed2 = volcanoParamWave[5]
 	Variable meanOpt = volcanoParamWave[6]
+	Variable perseusOpt = volcanoParamWave[7]
 	
 	// build panel
 	KillWindow/Z $panelName
@@ -1464,6 +1528,8 @@ Function MakeCondSelectorPanel()
 	SetVariable box6,pos={10,offset+69},size={250,16},title="Fold-change (2 is twofold)?",format="%g",value=_NUM:foldChange
 	CheckBox box7,pos={10,offset+88},size={20,20},title="Analyse paired data?",value=pairOpt,mode=0
 	CheckBox box11,pos={10,offset+103},size={20,20},title="Ratios v Ratios?",value=meanOpt,mode=0
+	CheckBox box12,pos={130,offset+88},size={20,20},title="Perseus style?",value=perseusOpt,mode=0
+	
 	CheckBox box8,pos={528,97},size={20,20},title="Reproducibly random?",value=seedOpt,mode=0
 	
 	TitleBox tb3,pos={528,10},size={115,20},title="Imputation:",fstyle=1,fsize=11,labelBack=(65000,55000,65000),frame=0
@@ -1523,6 +1589,8 @@ Function DoItMultiButtonProc(ba) : ButtonControl
 			Variable seed2 = V_Value
 			ControlInfo/W=$ba.win box11
 			Variable meanOpt = V_Value
+			ControlInfo/W=$ba.win box12
+			Variable perseusOpt = V_Value
 		
 			Print "Test group:", label1
 			Print "Control group:", label2
@@ -1541,6 +1609,11 @@ Function DoItMultiButtonProc(ba) : ButtonControl
 			endif
 			if(seedOpt == 1)
 				Print "Using RNG seeds:", label1, "=", seed1, "&", label2, "=", seed2
+			else
+				Print "Using random RNG seed"
+			endif
+			if(perseusOpt == 1)
+				Print "Comparisons using Perseus style processing (log2 transformed data rather than linear)."
 			endif
 			WAVE/Z/T volcanoPrefixWave = root:volcanoPrefixWave, volcanoLabelWave = root:volcanoLabelWave
 			volcanoPrefixWave[0] = prefix1
@@ -1555,6 +1628,7 @@ Function DoItMultiButtonProc(ba) : ButtonControl
 			volcanoParamWave[4] = seed1
 			volcanoParamWave[5] = seed2
 			volcanoParamWave[6] = meanOpt
+			volcanoParamWave[7] = perseusOpt
 			KillWindow/Z $(ba.win)
 			
 			VolcanoWorkflowWrapper(1)
