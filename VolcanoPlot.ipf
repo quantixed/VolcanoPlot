@@ -611,12 +611,14 @@ Function MakeMeanComparison()
 End
 
 STATIC Function FromVolcanoToPCA()
-	WAVE/Z allCond1, allCond2
-	WAVE/Z forPCA
-	KillWaves/Z forPCA
+	WAVE/Z allCond1, allCond2 // these are linear
+	WAVE/Z volcanoParamWave
+	WAVE/Z forPCA,forPCACol
+	KillWaves/Z forPCA,forPCACol
 	// we will use imputed values and we will take the ratio per replicate
-	// note that Volcano plot ratio is the mean of cond1 / mean of cond2
-	// here we take the ratio of replicates and use the replicates for PCA, so...
+	// note that Volcano plot ratio is either the mean of cond1 / mean of cond2
+	// or the difference (subtraction) of log2 transformed data
+	Concatenate/O/NP=1 {allCond1,allCond2}, forPCACol
 	if(DimSize(allCond1,1) != DimSize(allCond2,1))
 		Print "Number of replicates between conditions differs. PCA is of all data, not ratios."
 		Concatenate/O/NP=1 {allCond1,allCond2}, forPCA
@@ -625,7 +627,14 @@ STATIC Function FromVolcanoToPCA()
 		Concatenate/O/NP=1 {allCond1,allCond2}, forPCA
 		return 0
 	else
-		MatrixOp/O forPCA = allCond1 / allCond2
+		if(volcanoParamWave[7] == 0)
+			// here we take the ratio of replicates and use the replicates for PCA, so...
+			MatrixOp/O forPCA = allCond1 / allCond2
+		else
+			// here we do the subtraction of replicates (log2 transformed) and use the replicates for PCA, so...
+			MatrixOp/O forPCA = log2(allCond1) - log2(allCond2)
+			// note that an alternative here would be to take Z (subtract each value from the row mean of 2nd group) 
+		endif
 	endif
 	DoThePCA(0)
 End
@@ -636,6 +645,7 @@ STATIC Function GetReadyForPCA(STRING selectedWavesList,VARIABLE baseVal)
 	Concatenate/O selectedWavesList, forPCA
 	// deal with baseVal - this uses random values even if a seed was used for other analyses
 	TransformImputeBaseVal(forPCA)
+	Duplicate/O forPCA,forPCACol
 	DoThePCA(1)
 End
 
@@ -645,13 +655,15 @@ Function DoThePCA(opt)
 	Variable opt // 1 means substitute 0 for missing values, 0 means delete whole row.
 	
 	KillWindow/Z pcaPlot
-	WAVE/Z forPCA
+	KillWindow/Z pcaGroupPlot
+	WAVE/Z forPCA, forPCACol, volcanoParamWave
 	if(!WaveExists(forPCA))
 		DoAlert 0, "Missing a 2D wave, forPCA"
 		return 0
 	endif
 	Variable nProt = dimsize(forPCA,0)
 	Variable nRep = dimsize(forPCA,1)
+	Variable nRepCol = DimSize(forPCACol,1)
 	Variable nc
 	
 	WAVE/Z colorWave, colorTableWave
@@ -664,14 +676,23 @@ Function DoThePCA(opt)
 	endif
 	// make a version of colorwave to display interesting proteins
 	Duplicate/O colorWave, colorPCAWave
+	// make another colorwave to show PCA columns
+	Make/O/N=(nRepCol) colorPCAColWave = p
+	colorPCAColWave[floor(nRepCol/2),*] += nRepCol/2
 	
 	// pre-process data
-	// log2 transform
-	MatrixOp/O forPCA = log2(forPCA)
+	MatrixOp/O forPCACol = log2(forPCACol)
+	if(volcanoParamWave[7] == 0)
+		// log2 transform
+		MatrixOp/O forPCA = log2(forPCA)
+	else
+		// do nothing the difference is already transformed
+	endif
 	// we have to deal with missing data
 	if(opt == 1)
 		// in case we have NaN or Inf - change to 0
 		forPCA[][] = (numtype(forPCA[p][q]) == 2 || numtype(forPCA[p][q]) == 1) ? 0 : forPCA[p][q]
+		forPCACol[][] = (numtype(forPCACol[p][q]) == 2 || numtype(forPCACol[p][q]) == 1) ? 0 : forPCACol[p][q]
 	else
 		// in case we have NaN or Inf - delete whole row
 		forPCA[][] = (numtype(forPCA[p][q]) == 2 || numtype(forPCA[p][q]) == 1) ? NaN : forPCA[p][q]
@@ -684,29 +705,58 @@ Function DoThePCA(opt)
 		// treat the colorPCAWave the same
 		colorPCAWave[] = colorPCAWave[p] * delW[p]
 		WaveTransform zapnans colorPCAWave
+		// now do column wave
+		forPCACol[][] = (numtype(forPCACol[p][q]) == 2 || numtype(forPCACol[p][q]) == 1) ? NaN : forPCACol[p][q]
+		// set row with 1 or more NaN to all NaN
+		MatrixOp/O/FREE delW = sumrows(forPCACol) / sumrows(forPCACol)
+		forPCACol[][] = forPCACol[p][q] * delW[p]
+		MatrixOp/O forPCACol = zapnans(forPCACol)
+		nc = numpnts(forPCACol) / nRepCol
+		MatrixOp/O forPCACol = redimension(forPCACol,nc,nRepCol)
 	endif
-	// centre the data
-	MatrixOp/O forPCA = SubtractMean(forPCA,2)
-	// do the PCA, SRMT flag is needed to get M_R
-	PCA/ALL/SRMT forPCA
-	WAVE/Z M_R
-	// M_R is inverse compared to the output from SIMCA-P+
-	M_R *= -1
 	
+	// centre the data
+	MatrixOp/O/FREE forPCARow = SubtractMean(forPCA,2)
+	// do the PCA for Rows, SRMT flag is needed to get M_R
+	PCA/ALL/SRMT forPCARow
+	WAVE/Z M_R
+	Duplicate/O M_R, M_RRow
+	// M_R is inverse compared to the output from SIMCA-P+
+	M_RRow *= -1
+	// and now for columns (we transpose and use rows
+	MatrixOp/O/FREE forPCACol = SubtractMean(forPCACol^t,2)
+	PCA/ALL/SRMT forPCACol
+	WAVE/Z M_R
+	Duplicate/O M_R, M_RCol
+	
+	// graphs
 	// display PC1 and PC2
-	Display/N=pcaPlot/W=(36,757,431,965) M_R[][1] vs M_R[][0]
+	Display/N=pcaPlot/W=(36,757,431,965) M_RRow[][1] vs M_RRow[][0]
 	// find min and max for PC1 and PC2 combined
-	WaveStats/Q/RMD=[][0,1] forPCA
+	WaveStats/Q/RMD=[][0,1] M_RRow // we want min max of this not of forPCA
 	SetAxis/W=pcaPlot left V_min,V_max
 	SetAxis/W=pcaPlot bottom V_min,V_max
 	ModifyGraph/W=pcaPlot mode=3,marker=19,mrkThick=0
-	ModifyGraph/W=pcaPlot zColor(M_R)={colorPCAWave,0,3,ctableRGB,0,colorTableWave}
-	ModifyGraph/W=pcaPlot zmrkSize(M_R)={colorPCAWave,0,1,1,1.5}
+	ModifyGraph/W=pcaPlot zColor(M_RRow)={colorPCAWave,0,3,ctableRGB,0,colorTableWave}
+	ModifyGraph/W=pcaPlot zmrkSize(M_RRow)={colorPCAWave,0,1,1,1.5}
 	ModifyGraph/W=pcaPlot zero=4,mirror=1
 	Label/W=pcaPlot left "PC2"
 	Label/W=pcaPlot bottom "PC1"
 	ModifyGraph/W=pcaPlot height={Plan,1,left,bottom}
-	SetWindow pcaPlot, hook(modified)=thunk_hook
+	// now the other
+	Display/N=pcaGroupPlot/W=(86,807,481,1105) M_RCol[][1] vs M_RCol[][0]
+	// find min and max for PC1 and PC2 combined
+	WaveStats/Q/RMD=[][0,1] M_RCol // we want min max of this not of forPCA
+	SetAxis/W=pcaGroupPlot left V_min,V_max
+	SetAxis/W=pcaGroupPlot bottom V_min,V_max
+	ModifyGraph/W=pcaGroupPlot mode=3,marker=8
+	ModifyGraph/W=pcaGroupPlot zColor(M_RCol)={colorPCAColWave,*,*,Rainbow,0}
+	ModifyGraph/W=pcaGroupPlot zero=4,mirror=1
+	Label/W=pcaGroupPlot left "PC2"
+	Label/W=pcaGroupPlot bottom "PC1"
+	ModifyGraph/W=pcaGroupPlot height={Plan,1,left,bottom}
+	// removing this because the thunk labels might not align after row deletions!
+//	SetWindow pcaPlot, hook(modified)=thunk_hook
 End
 
 // add labels to volcano plot to indicate the top x proteins
@@ -761,12 +811,15 @@ STATIC Function MakeTheLayout()
 	AppendLayoutObject/W=summaryLayout graph meanPlot
 	AppendLayoutObject/W=summaryLayout graph pcaPlot
 	AppendLayoutObject/W=summaryLayout graph volcanoPlot
+	AppendLayoutObject/W=summaryLayout graph pcaGroupPlot
+	
 	LayoutPageAction/W=summaryLayout size(-1)=(595, 842), margins(-1)=(18, 18, 18, 18)
 	ModifyLayout/W=summaryLayout units=0
 	ModifyLayout/W=summaryLayout frame=0,trans=1
 	
 	ModifyLayout/W=summaryLayout left(meanPlot)=322,top(meanPlot)=21,width(meanPlot)=258,height(meanPlot)=222
 	ModifyLayout/W=summaryLayout left(pcaPlot)=322,top(pcaPlot)=244,width(pcaPlot)=260,height(pcaPlot)=224
+	ModifyLayout/W=summaryLayout left(pcaGroupPlot)=322,top(pcaGroupPlot)=484,width(pcaGroupPlot)=260,height(pcaGroupPlot)=224
 	ModifyLayout/W=summaryLayout left(volcanoPlot)=21,top(volcanoPlot)=21,height(volcanoPlot)=450,width(volcanoPlot)=320
 End
 
