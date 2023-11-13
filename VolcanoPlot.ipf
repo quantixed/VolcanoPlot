@@ -21,6 +21,7 @@ Menu "Proteomics"
 		"Label Top 10", /Q, LabelTopTenWorkflow()
 		"Save Layout", /Q, SaveTheLayout()
 		"Save Table", /Q, SaveTheTable()
+		"Save Data", /Q, SaveUnsortedDataMeans()
 //		"Save for ProteoRE", /Q, SaveForProteore()
 	end
 	SubMenu "Subcellular analysis"
@@ -835,6 +836,12 @@ Function SaveTheTable()
 	WAVE/Z/T volcanoLabelWave
 	String fileName = "rankTable_" + volcanoLabelWave[0] + "vs" + volcanoLabelWave[1] + ".txt"
 	Save/B/J/M="\n"/P=DiskFolder/W "so_NAME;so_SHORTNAME;so_PID;so_productWave;so_colorWave;so_allTWave;so_ratioWave;so_keyW;" as fileName
+End
+
+Function SaveUnsortedDataMeans()
+	WAVE/Z/T volcanoLabelWave
+	String fileName = "withMeans_" + volcanoLabelWave[0] + "vs" + volcanoLabelWave[1] + ".txt"
+	Save/B/J/M="\n"/P=DiskFolder/W "NAME;SHORTNAME;PID;productWave;colorWave;allTWave;ratioWave;meanCond1;meanCond2;" as fileName
 End
 
 Function SaveForProteore()
