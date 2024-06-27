@@ -1,4 +1,7 @@
 # VolcanoPlot
+
+[![DOI](https://zenodo.org/badge/107754967.svg)](https://zenodo.org/doi/10.5281/zenodo.12570017)
+
 Making volcano plots from proteomic data in IgorPro
 
 - [Using data direct from MaxQuant](#from-maxquant)
