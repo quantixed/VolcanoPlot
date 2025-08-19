@@ -99,4 +99,4 @@ A PCA is generated for the selected data.
 This works by comparing intensities of each detected protein per replicate, in the datasets.
 The PCA is designed to be equivalent to SIMCA-P+.
 
-Note that on loading of MaxQuant data, any rows that have no information for Gene Name or Protein Name (i.e. contaminants) are filtered out during the load procedure.
+Note that on loading of MaxQuant data, any rows that indicate contaminants are filtered out during the load procedure.

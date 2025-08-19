@@ -117,7 +117,6 @@ Function LoadMaxQuantFile()
 	Variable nWaves = ItemsInList(wList)
 	String newList = "root:SHORTNAME;root:NAME;root:PID;"
 	String wName, newName, fasta
-	Variable start, stop
 	
 	Variable i,j
 	
@@ -137,17 +136,12 @@ Function LoadMaxQuantFile()
 		endif
 		fasta = StringFromList(0,Fasta_headers[i])
 		if(strlen(SHORTNAME[i]) == 0)
-			start = strsearch(fasta," GN=",0) + 4
-			stop = strsearch(fasta," ",start) - 1
-			if(stop < 0)
-				stop = strlen(fasta) - 1
-			endif
-			SHORTNAME[i] = fasta[start,stop]
+			// if SHORTNAME is missing we will grab the Gene Name from GN= in FASTA header
+			SHORTNAME[i] = GetFASTAInfo(fasta,0)
 		endif
 		if(strlen(NAME[i]) == 0)
-			start = strsearch(fasta," ",0) + 1
-			stop = strsearch(fasta," OS=",0) - 1
-			NAME[i] = fasta[start,stop]
+			// if NAME is missing we will grab the text preceding the Organism in FASTA header
+			NAME[i] = GetFASTAInfo(fasta,1)
 		endif
 	endfor
 	
@@ -1962,4 +1956,34 @@ STATIC Function DeleteTheseRowsFrom2DWave(w,delw)
 			DeletePoints/M=0 i,1,w
 		endif
 	endfor
+End
+
+STATIC Function/S GetFASTAInfo(s,opt)
+	String s
+	Variable opt
+	Variable start, stop
+	// check if we're not dealing with a real FASTA header
+	if(strsearch(s," GN=",0) < 0)
+		// if the FASTA header is not formatted we'll either draw a blank
+		// or retrieve whatever is the first text up to the first space (or end of string)
+		start = 0
+		stop = strsearch(s," ",start) - 1
+		if(stop < 0)
+			stop = strlen(s) - 1
+		endif
+		return s[start,stop]
+	else
+		if(opt == 1)
+			start = strsearch(s," GN=",0) + 4
+			stop = strsearch(s," ",start) - 1
+			if(stop < 0)
+				stop = strlen(s) - 1
+			endif
+			return s[start,stop]
+		else
+			start = strsearch(s," ",0) + 1
+			stop = strsearch(s," OS=",0) - 1
+			return s[start,stop]
+		endif
+	endif
 End
